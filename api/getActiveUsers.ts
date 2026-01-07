@@ -57,32 +57,26 @@ export default async function handler(
             });
         }
 
-        // 🔍 CHIVATO 4: Validar que el content-type sea JSON
-        if (!contentType.includes('application/json')) {
-            const htmlOrText = await response.text();
-            console.error('❌ ERROR: Se esperaba JSON pero se recibió:', contentType);
-            console.error('📄 CONTENIDO RECIBIDO (primeros 1000 caracteres):');
-            console.error(htmlOrText.substring(0, 1000));
-            return res.status(500).json({
-                error: 'El servidor no devolvió JSON',
-                contentType: contentType,
-                preview: htmlOrText.substring(0, 200)
-            });
-        }
-
-        // 🔍 CHIVATO 5: Intentar parsear el JSON
+        // 🔍 CHIVATO 4: Intentar parsear como JSON (sin importar el content-type)
+        // Nota: El backend devuelve JSON válido pero con content-type text/html
         let data;
         try {
             data = await response.json();
             console.log('✅ JSON parseado correctamente');
             console.log('📦 DATA keys:', Object.keys(data).join(', '));
+            if (contentType && !contentType.includes('application/json')) {
+                console.warn('⚠️ WARNING: Content-Type es', contentType, 'pero se parseó como JSON correctamente');
+            }
         } catch (jsonError) {
+            // Si falla el parseo de JSON, intentar obtener el texto para debugging
             const rawText = await response.text();
             console.error('❌ ERROR al parsear JSON:');
+            console.error('Content-Type:', contentType);
             console.error('Error:', jsonError);
-            console.error('Raw response:', rawText.substring(0, 1000));
+            console.error('Raw response (primeros 1000 caracteres):', rawText.substring(0, 1000));
             return res.status(500).json({
-                error: 'Error al parsear JSON de la respuesta',
+                error: 'Error al parsear respuesta del servidor',
+                contentType: contentType,
                 message: jsonError instanceof Error ? jsonError.message : 'Unknown error',
                 preview: rawText.substring(0, 200)
             });
