@@ -41,7 +41,7 @@ interface ActionPortalProps {
 
 export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   const [form, setForm] = useState<FormState>(INITIAL_FORM_STATE);
-  const [bosses, setBosses] = useState<string[]>([]);
+  const [bosses, setBosses] = useState<Array<{ name: string, email: string }>>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingBosses, setIsLoadingBosses] = useState(true);
   const [submitted, setSubmitted] = useState(false);
@@ -74,19 +74,26 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
             .map((item: any) => {
               const nombre = item.ananam || item.fullName || item.FULL_NAME || item.name || item.nombre || 'Nombre no disponible';
               const cargo = item.anapos || item.position || item.cargo || item.posicion || '';
+              const email = item.anamai || item.email || item.correo || '';
+
+              let displayName = nombre;
               if (cargo && nombre !== 'Nombre no disponible') {
-                return `${nombre} - ${cargo}`;
+                displayName = `${nombre} - ${cargo}`;
               }
-              return nombre;
+
+              return {
+                name: displayName,
+                email: email
+              };
             })
-            .filter((name: string) => name && name !== 'Nombre no disponible');
+            .filter((boss: any) => boss.name && boss.name !== 'Nombre no disponible' && boss.email);
 
           setBosses(formattedBosses);
         } else {
-          setBosses(["Error de autorización API"]);
+          setBosses([{ name: "Error de autorización API", email: "" }]);
         }
       } catch (error) {
-        setBosses(["Error de conexión. Por favor, recarga la página."]);
+        setBosses([{ name: "Error de conexión. Por favor, recarga la página.", email: "" }]);
       } finally {
         setIsLoadingBosses(false);
       }
@@ -113,6 +120,15 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   const handleInputChange = (field: keyof FormState, value: any) => {
     if (field === 'email') {
       handleEmailChange(value);
+    } else if (field === 'immediateBoss') {
+      // Extraer el email del jefe seleccionado
+      const selectedBoss = bosses.find(boss => boss.name === value);
+      setForm(prev => ({
+        ...prev,
+        immediateBoss: value,
+        bossEmail: selectedBoss?.email || ''
+      }));
+      return;
     } else {
       setForm(prev => {
         const newForm = { ...prev, [field]: value };
@@ -322,8 +338,8 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                       {isLoadingBosses ? 'Cargando...' : 'Seleccionar'}
                     </option>
                     {bosses.map((boss, idx) => (
-                      <option key={idx} value={boss} className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>
-                        {boss}
+                      <option key={idx} value={boss.name} className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>
+                        {boss.name}
                       </option>
                     ))}
                   </select>
