@@ -1,11 +1,11 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  ChevronDown, 
+import {
+  ChevronDown,
   ChevronRight,
-  Upload, 
-  CheckCircle2, 
+  Upload,
+  CheckCircle2,
   FileText,
   X,
   Loader2,
@@ -19,7 +19,7 @@ import { FormState, RequestReason } from '../types';
 
 const LOGO_URL = 'https://static.wixstatic.com/media/98a19d_504d5e7478054d2484448813ac235267~mv2.png';
 const WEBHOOK_URL = 'https://hook.eu2.make.com/8pscatpux73uutt3ce8skn4x7k4titqf';
-const BOSSES_API_URL = '/api/getActiveUsers';
+const BOSSES_API_URL = '/api/proxy/getActiveUsers';
 
 const INITIAL_FORM_STATE: FormState = {
   email: '',
@@ -59,12 +59,12 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
             'Content-Type': 'application/json'
           }
         });
-        
+
         if (response.ok) {
           const result = await response.json();
           const rawData = Array.isArray(result) ? result : (result.data || result.users || result.result || []);
           const jefesKeywords = ['JEFE', 'GERENTE', 'DIRECTOR', 'LIDER', 'SUPERVISOR', 'COORDINADOR', 'MANAGER', 'HEAD'];
-          
+
           const formattedBosses = rawData
             .filter((item: any) => {
               if (!item || typeof item !== 'object') return false;
@@ -116,12 +116,12 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
     } else {
       setForm(prev => {
         const newForm = { ...prev, [field]: value };
-        
+
         // Calcular días automáticamente si es incapacidad
         if ((field === 'startDate' || field === 'endDate') && prev.reason === 'Incapacidad') {
           const start = field === 'startDate' ? value : prev.startDate;
           const end = field === 'endDate' ? value : prev.endDate;
-          
+
           if (start && end) {
             const startDate = new Date(start);
             const endDate = new Date(end);
@@ -130,7 +130,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
             newForm.incapacityDays = diffDays.toString();
           }
         }
-        
+
         return newForm;
       });
     }
@@ -195,7 +195,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   const isFormValid = () => {
     const basicFields = form.email && form.country && form.immediateBoss && form.reason && form.comments.trim().length > 0;
     if (!basicFields) return false;
-    
+
     const needsDates = ['Vacaciones', 'Permiso', 'Incapacidad', 'Home Office', 'Goce de dias libres compensatorios', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason);
     if (needsDates && (!form.startDate || !form.endDate)) return false;
     if (form.reason === 'Permiso' && (!form.startTime || !form.endTime)) return false;
@@ -210,14 +210,14 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
     <>
       <AnimatePresence>
         {showSuccessAnimation && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] flex items-center justify-center font-inter backdrop-blur-2xl"
             style={{ backgroundColor: 'rgba(0, 0, 0, 0.95)' }}
           >
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.5, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ duration: 0.5, ease: [0.34, 1.56, 0.64, 1] }}
@@ -236,7 +236,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
       </AnimatePresence>
 
       {submitted ? (
-        <motion.div 
+        <motion.div
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           className={`rounded-3xl p-16 text-center max-w-md mx-auto font-inter ${isDark ? 'bg-zinc-900/80 backdrop-blur-xl' : 'bg-white shadow-2xl'}`}
@@ -246,16 +246,16 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
           </div>
           <h2 className={`text-2xl font-bold mb-4 font-inter ${isDark ? 'text-white' : 'text-gray-900'}`}>Solicitud Enviada</h2>
           <p className={`mb-10 text-sm font-inter ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Tu jefatura recibirá la notificación de inmediato</p>
-          <button 
-            type="button" 
-            onClick={() => { setSubmitted(false); setForm(INITIAL_FORM_STATE); }} 
+          <button
+            type="button"
+            onClick={() => { setSubmitted(false); setForm(INITIAL_FORM_STATE); }}
             className="w-full py-5 rounded-2xl font-bold transition-all duration-300 bg-[#E60000] text-white hover:bg-[#cc0000] font-inter"
           >
             Nueva Gestión
           </button>
         </motion.div>
       ) : (
-        <motion.div 
+        <motion.div
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.5 }}
@@ -279,13 +279,13 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                   Correo
                 </label>
                 <div className="relative">
-                  <input 
-                    type="email" 
-                    required 
+                  <input
+                    type="email"
+                    required
                     placeholder="usuario@red.com"
                     className={`w-full pb-3 text-base font-medium transition-all duration-300 font-inter outline-none bg-transparent border-b-2 ${isDark ? 'text-white border-white/10 placeholder:text-white/30 focus:border-[#E60000]' : 'text-gray-900 border-gray-200 placeholder:text-gray-400 focus:border-[#E60000]'}`}
-                    value={form.email} 
-                    onChange={(e) => handleInputChange('email', e.target.value)} 
+                    value={form.email}
+                    onChange={(e) => handleInputChange('email', e.target.value)}
                   />
                 </div>
               </div>
@@ -296,9 +296,9 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                   País
                 </label>
                 <div className="relative">
-                  <input 
-                    type="text" 
-                    readOnly 
+                  <input
+                    type="text"
+                    readOnly
                     value={form.country}
                     className={`w-full pb-3 text-base font-bold transition-all font-inter outline-none bg-transparent border-b-2 cursor-default ${isDark ? 'text-white border-white/10' : 'text-gray-900 border-gray-200'}`}
                   />
@@ -311,11 +311,11 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                   Jefe Inmediato
                 </label>
                 <div className="relative">
-                  <select 
-                    required 
+                  <select
+                    required
                     disabled={isLoadingBosses}
                     className={`w-full pb-3 text-base font-medium transition-all duration-300 appearance-none font-inter outline-none bg-transparent border-b-2 pr-8 ${isDark ? 'text-white border-white/10 focus:border-[#E60000]' : 'text-gray-900 border-gray-200 focus:border-[#E60000]'}`}
-                    value={form.immediateBoss} 
+                    value={form.immediateBoss}
                     onChange={(e) => handleInputChange('immediateBoss', e.target.value)}
                   >
                     <option value="" disabled className={isDark ? 'bg-zinc-900' : 'bg-white'}>
@@ -342,10 +342,10 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                 Tipo de Gestión
               </label>
               <div className="relative">
-                <select 
-                  required 
+                <select
+                  required
                   className={`w-full px-6 py-5 rounded-2xl text-lg font-bold uppercase transition-all duration-300 appearance-none font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 pr-12 ${isDark ? 'bg-white/5 text-white border border-white/10 hover:bg-white/8' : 'bg-gray-50 text-gray-900 border border-gray-200 hover:bg-gray-100'}`}
-                  value={form.reason} 
+                  value={form.reason}
                   onChange={(e) => handleInputChange('reason', e.target.value as RequestReason)}
                 >
                   <option value="" disabled className={isDark ? 'bg-zinc-900' : 'bg-white'}>
@@ -370,7 +370,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
             {/* Campos Dinámicos */}
             <AnimatePresence mode="wait">
               {form.reason && (
-                <motion.div 
+                <motion.div
                   key={form.reason}
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
@@ -384,24 +384,24 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                         <label className={`text-xs font-semibold uppercase tracking-wider font-inter ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                           Fecha Inicio
                         </label>
-                        <input 
-                          type="date" 
-                          required 
+                        <input
+                          type="date"
+                          required
                           className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}
-                          value={form.startDate} 
-                          onChange={(e) => handleInputChange('startDate', e.target.value)} 
+                          value={form.startDate}
+                          onChange={(e) => handleInputChange('startDate', e.target.value)}
                         />
                       </div>
                       <div className="space-y-3">
                         <label className={`text-xs font-semibold uppercase tracking-wider font-inter ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                           Fecha Fin
                         </label>
-                        <input 
-                          type="date" 
-                          required 
+                        <input
+                          type="date"
+                          required
                           className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}
-                          value={form.endDate} 
-                          onChange={(e) => handleInputChange('endDate', e.target.value)} 
+                          value={form.endDate}
+                          onChange={(e) => handleInputChange('endDate', e.target.value)}
                         />
                       </div>
                     </div>
@@ -413,24 +413,24 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                         <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                           <Clock size={12} /> Hora Inicio
                         </label>
-                        <input 
-                          type="time" 
-                          required 
+                        <input
+                          type="time"
+                          required
                           className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}
-                          value={form.startTime} 
-                          onChange={(e) => handleInputChange('startTime', e.target.value)} 
+                          value={form.startTime}
+                          onChange={(e) => handleInputChange('startTime', e.target.value)}
                         />
                       </div>
                       <div className="space-y-3">
                         <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                           <Clock size={12} /> Hora Fin
                         </label>
-                        <input 
-                          type="time" 
-                          required 
+                        <input
+                          type="time"
+                          required
                           className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}
-                          value={form.endTime} 
-                          onChange={(e) => handleInputChange('endTime', e.target.value)} 
+                          value={form.endTime}
+                          onChange={(e) => handleInputChange('endTime', e.target.value)}
                         />
                       </div>
                     </div>
@@ -467,8 +467,8 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                   {reasonsRequiringEvidence.includes(form.reason as RequestReason) && (
                     <div className={`pt-8 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
                       <input ref={fileInputRef} type="file" className="hidden" id="file-upload" onChange={(e) => { if (e.target.files?.[0]) handleInputChange('attachment', e.target.files[0]); }} />
-                      <label 
-                        htmlFor="file-upload" 
+                      <label
+                        htmlFor="file-upload"
                         className={`flex items-center justify-between p-6 rounded-2xl border-2 border-dashed transition-all duration-300 cursor-pointer ${form.attachment ? 'bg-[#E60000]/10 border-[#E60000]/40' : isDark ? 'border-white/10 hover:border-[#E60000]/40 hover:bg-white/5' : 'border-gray-200 hover:border-[#E60000]/40 hover:bg-gray-50'}`}
                       >
                         <div className="flex items-center gap-5">
@@ -485,9 +485,9 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                           </div>
                         </div>
                         {form.attachment && (
-                          <button 
-                            type="button" 
-                            onClick={(e) => { e.preventDefault(); handleInputChange('attachment', null); if (fileInputRef.current) fileInputRef.current.value = ''; }} 
+                          <button
+                            type="button"
+                            onClick={(e) => { e.preventDefault(); handleInputChange('attachment', null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
                             className="p-2 rounded-full hover:bg-white/10 text-[#E60000] transition-all"
                           >
                             <X size={20} />
@@ -518,15 +518,15 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
 
             {/* Botones */}
             <div className="flex flex-col md:flex-row items-center gap-4 pt-8">
-              <button 
-                type="button" 
+              <button
+                type="button"
                 onClick={handleReset}
                 className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 font-inter ${isDark ? 'text-gray-400 hover:text-white hover:bg-white/5' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'}`}
               >
                 Limpiar
               </button>
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 disabled={!isFormValid() || isSubmitting}
                 className={`flex-1 md:flex-initial md:min-w-[300px] py-5 px-10 rounded-2xl font-bold text-lg transition-all duration-300 font-inter flex items-center justify-center gap-3 ${!isFormValid() || isSubmitting ? 'opacity-40 cursor-not-allowed bg-[#E60000]' : 'bg-[#E60000] hover:bg-[#cc0000] hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-[#E60000]/30'} text-white`}
               >
