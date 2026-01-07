@@ -19,7 +19,7 @@ import { FormState, RequestReason } from '../types';
 
 const LOGO_URL = 'https://static.wixstatic.com/media/98a19d_504d5e7478054d2484448813ac235267~mv2.png';
 const WEBHOOK_URL = 'https://hook.eu2.make.com/8pscatpux73uutt3ce8skn4x7k4titqf';
-const BOSSES_API_URL = '/api/proxy/getActiveUsers';
+const BOSSES_API_URL = '/api/getActiveUsers';
 
 const INITIAL_FORM_STATE: FormState = {
   email: '',
