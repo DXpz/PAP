@@ -67,6 +67,30 @@ export default async function handler(
             if (contentType && !contentType.includes('application/json')) {
                 console.warn('⚠️ WARNING: Content-Type es', contentType, 'pero se parseó como JSON correctamente');
             }
+
+            // 🔒 SECURITY: Filtrar datos sensibles antes de enviar al frontend
+            // Solo devolver los campos mínimos necesarios para el dropdown de jefes
+            if (data.data && Array.isArray(data.data)) {
+                console.log('🔒 SECURITY: Filtrando datos sensibles. Usuarios originales:', data.data.length);
+
+                const filteredData = data.data.map((user: any) => ({
+                    // Solo devolver 3 campos necesarios
+                    name: user.ananam || user.fullName || user.name || '',
+                    email: user.anamai || user.email || '',
+                    position: user.anapos || user.position || ''
+                    // NO devolver: anacod, anarea, anapai, status, anajef, nombre_jefe, correo_jefe
+                })).filter((user: any) => user.name && user.email); // Eliminar usuarios sin nombre o email
+
+                console.log('🔒 SECURITY: Datos filtrados. Usuarios finales:', filteredData.length);
+
+                // Reemplazar el array original con el filtrado
+                data = {
+                    ok: data.ok,
+                    status: data.status,
+                    message: data.message,
+                    data: filteredData
+                };
+            }
         } catch (jsonError) {
             // Si falla el parseo de JSON, intentar obtener el texto para debugging
             const rawText = await response.text();
