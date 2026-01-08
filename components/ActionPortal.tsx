@@ -46,6 +46,8 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   const [isLoadingBosses, setIsLoadingBosses] = useState(true);
   const [submitted, setSubmitted] = useState(false);
   const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
+  const [showRejectionAnimation, setShowRejectionAnimation] = useState(false);
+  const [rejectionMessage, setRejectionMessage] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -107,14 +109,16 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   ];
 
   const handleEmailChange = (value: string) => {
+    // Eliminar espacios al inicio y final del email
+    const trimmedEmail = value.trim();
     let detectedCountry = '';
-    const lowerEmail = value.toLowerCase();
+    const lowerEmail = trimmedEmail.toLowerCase();
     if (lowerEmail.includes('.sv')) {
       detectedCountry = 'El Salvador';
     } else if (lowerEmail.includes('.gt')) {
       detectedCountry = 'Guatemala';
     }
-    setForm(prev => ({ ...prev, email: value, country: detectedCountry }));
+    setForm(prev => ({ ...prev, email: trimmedEmail, country: detectedCountry }));
   };
 
   const handleInputChange = (field: keyof FormState, value: any) => {
@@ -191,7 +195,28 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
         body: JSON.stringify(payload),
       });
 
+      // Verificar si la respuesta es exitosa
       if (response.ok) {
+        // Intentar leer la respuesta como JSON para verificar si hay error del backend
+        try {
+          const result = await response.json();
+
+          // Verificar si el webhook devolvió un error (correo no encontrado)
+          if (result.error || result.status === 'error' || result.success === false) {
+            setIsSubmitting(false);
+            setRejectionMessage(result.message || 'Correo Inválido');
+            setShowRejectionAnimation(true);
+            setTimeout(() => {
+              setShowRejectionAnimation(false);
+              setRejectionMessage('');
+            }, 4200); // 1 segundo más que la animación de éxito
+            return;
+          }
+        } catch (e) {
+          // Si no es JSON, asumimos que es exitoso
+        }
+
+        // Éxito
         setIsSubmitting(false);
         setShowSuccessAnimation(true);
         setTimeout(() => {
@@ -199,12 +224,32 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
           setSubmitted(true);
         }, 3200);
       } else {
-        alert('Error al enviar la gestión.');
+        // Error HTTP (400, 404, 500, etc)
+        let errorMessage = 'Correo Inválido';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+        } catch (e) {
+          // Si no se puede parsear, usar mensaje por defecto
+        }
+
         setIsSubmitting(false);
+        setRejectionMessage(errorMessage);
+        setShowRejectionAnimation(true);
+        setTimeout(() => {
+          setShowRejectionAnimation(false);
+          setRejectionMessage('');
+        }, 4200);
       }
     } catch (error) {
       console.error('Error:', error);
       setIsSubmitting(false);
+      setRejectionMessage('Error de conexión');
+      setShowRejectionAnimation(true);
+      setTimeout(() => {
+        setShowRejectionAnimation(false);
+        setRejectionMessage('');
+      }, 4200);
     }
   };
 
@@ -246,6 +291,33 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
               </div>
               <h2 className="text-3xl font-bold text-white mb-3 font-inter">¡Perfecto!</h2>
               <p className="text-gray-400 font-inter">Gestión enviada exitosamente</p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showRejectionAnimation && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center font-inter backdrop-blur-2xl"
+            style={{ backgroundColor: 'rgba(0, 0, 0, 0.95)' }}
+          >
+            <motion.div
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.5, ease: [0.34, 1.56, 0.64, 1] }}
+              className="flex flex-col items-center"
+            >
+              <div className="relative mb-8">
+                <div className="w-28 h-28 rounded-full flex items-center justify-center bg-gradient-to-br from-red-600 to-red-800 shadow-2xl shadow-red-600/50">
+                  <X className="w-16 h-16 text-white" strokeWidth={2.5} />
+                </div>
+              </div>
+              <h2 className="text-3xl font-bold text-white mb-3 font-inter">¡Rechazado!</h2>
+              <p className="text-gray-400 font-inter">{rejectionMessage || 'Correo Inválido'}</p>
             </motion.div>
           </motion.div>
         )}
