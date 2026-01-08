@@ -70,13 +70,15 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
           const formattedBosses = rawData
             .filter((item: any) => {
               if (!item || typeof item !== 'object') return false;
-              const cargo = (item.anapos || item.position || item.cargo || item.posicion || '').toUpperCase();
+              // Ahora usamos los campos filtrados del proxy
+              const cargo = (item.position || '').toUpperCase();
               return jefesKeywords.some(keyword => cargo.includes(keyword));
             })
             .map((item: any) => {
-              const nombre = item.ananam || item.fullName || item.FULL_NAME || item.name || item.nombre || 'Nombre no disponible';
-              const cargo = item.anapos || item.position || item.cargo || item.posicion || '';
-              const email = item.anamai || item.email || item.correo || '';
+              // Usar los campos filtrados: name, email, position
+              const nombre = item.name || 'Nombre no disponible';
+              const cargo = item.position || '';
+              const email = item.email || '';
 
               let displayName = nombre;
               if (cargo && nombre !== 'Nombre no disponible') {
