@@ -13,7 +13,8 @@ import {
   Mail,
   MessageSquare,
   Clock,
-  Send
+  Send,
+  AlertCircle
 } from 'lucide-react';
 import { FormState, RequestReason } from '../types';
 
@@ -468,6 +469,26 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                   transition={{ duration: 0.3 }}
                   className={`rounded-2xl p-10 space-y-8 ${isDark ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-gray-200'}`}
                 >
+                  {/* Advertencia para Vacaciones */}
+                  {form.reason === 'Vacaciones' && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3, delay: 0.1 }}
+                      className={`flex items-start gap-4 p-5 rounded-xl ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
+                    >
+                      <AlertCircle size={22} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className={`text-sm font-bold mb-2 font-inter ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
+                          Importante: Vacaciones Lineales
+                        </p>
+                        <p className={`text-xs leading-relaxed font-inter ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
+                          Cada gestión de vacaciones debe ser <span className="font-bold">continua y lineal</span>. Si deseas tomar vacaciones de forma no continua (por ejemplo: 2 días, trabajar 1 día, y luego tomar más días), debes crear <span className="font-bold">múltiples acciones de personal separadas</span> para cada período.
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+
                   {['Vacaciones', 'Permiso', 'Incapacidad', 'Home Office', 'Goce de dias libres compensatorios', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason) && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-3">
