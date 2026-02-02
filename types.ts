@@ -12,12 +12,20 @@ export type RequestReason =
   | 'Otras Solicitudes de Jefatura'
   | 'Goce de dias libres compensatorios';
 
+export type VacationType = 
+  | 'vacaciones-dias'
+  | 'pago-prima-vacacional'
+  | 'ambos'
+  | '';
+
 export interface FormState {
   email: string;
   country: string;
   immediateBoss: string;
   bossEmail?: string; // Email del jefe inmediato
   reason: RequestReason | '';
+  vacationType?: VacationType; // Tipo de vacaciones
+  paymentDate?: string; // Fecha de pago de prima vacacional
   startDate?: string;
   endDate?: string;
   startTime?: string;

@@ -16,7 +16,7 @@ import {
   Send,
   AlertCircle
 } from 'lucide-react';
-import { FormState, RequestReason } from '../types';
+import { FormState, RequestReason, VacationType } from '../types';
 
 const LOGO_URL = 'https://static.wixstatic.com/media/98a19d_504d5e7478054d2484448813ac235267~mv2.png';
 const WEBHOOK_URL = 'https://hook.eu2.make.com/8pscatpux73uutt3ce8skn4x7k4titqf';
@@ -27,6 +27,8 @@ const INITIAL_FORM_STATE: FormState = {
   country: '',
   immediateBoss: '',
   reason: '',
+  vacationType: '',
+  paymentDate: '',
   comments: '',
   attachment: null,
   startDate: '',
@@ -140,6 +142,28 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
       setForm(prev => {
         const newForm = { ...prev, [field]: value };
 
+        // Limpiar vacationType y fechas si cambia de reason y no es Vacaciones
+        if (field === 'reason' && value !== 'Vacaciones') {
+          newForm.vacationType = '';
+          newForm.startDate = '';
+          newForm.endDate = '';
+          newForm.paymentDate = '';
+        }
+
+        // Limpiar fechas según tipo de vacación
+        if (field === 'vacationType') {
+          // Si es solo pago de prima vacacional, limpiar fechas de inicio/fin
+          if (value === 'pago-prima-vacacional') {
+            newForm.startDate = '';
+            newForm.endDate = '';
+          }
+          // Si es solo vacaciones de días, limpiar fecha de pago
+          if (value === 'vacaciones-dias') {
+            newForm.paymentDate = '';
+          }
+          // Si es ambos, no limpiar nada
+        }
+
         // Calcular días automáticamente si es incapacidad
         if ((field === 'startDate' || field === 'endDate') && prev.reason === 'Incapacidad') {
           const start = field === 'startDate' ? value : prev.startDate;
@@ -185,8 +209,15 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
         base64File = await fileToBase64(form.attachment);
       }
 
+      // Si es pago de prima vacacional o ambos, usar día 30 del mes
+      let paymentDate = form.paymentDate;
+      if (form.reason === 'Vacaciones' && (form.vacationType === 'pago-prima-vacacional' || form.vacationType === 'ambos')) {
+        paymentDate = '30'; // Enviar solo el día 30
+      }
+
       const payload = {
         ...form,
+        paymentDate,
         submittedAt: new Date().toISOString(),
         attachmentName: form.attachment?.name || null,
         attachmentData: base64File,
@@ -260,7 +291,21 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
     const basicFields = form.email && form.country && form.immediateBoss && form.reason && form.comments.trim().length > 0;
     if (!basicFields) return false;
 
-    const needsDates = ['Vacaciones', 'Permiso', 'Incapacidad', 'Home Office', 'Goce de dias libres compensatorios', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason);
+    // Validación especial para Vacaciones
+    if (form.reason === 'Vacaciones') {
+      // Debe seleccionar tipo de vacación
+      if (!form.vacationType) return false;
+      
+      // Si es vacaciones con días o ambos, requiere fechas de inicio/fin
+      if ((form.vacationType === 'vacaciones-dias' || form.vacationType === 'ambos') && (!form.startDate || !form.endDate)) {
+        return false;
+      }
+      
+      // Para pago de prima vacacional, se usa automáticamente el día 30
+      return true;
+    }
+
+    const needsDates = ['Permiso', 'Incapacidad', 'Home Office', 'Goce de dias libres compensatorios', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason);
     if (needsDates && (!form.startDate || !form.endDate)) return false;
     if (form.reason === 'Permiso' && (!form.startTime || !form.endTime)) return false;
     if (form.reason === 'Incapacidad' && !form.incapacityDays) return false;
@@ -443,7 +488,8 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                     Seleccionar tipo
                   </option>
                   <option value="Vacaciones" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Vacaciones</option>
-                  <option value="Permiso" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Permiso</option>
+                  {/* Opciones ocultas - mantener lógica intacta */}
+                  {/* <option value="Permiso" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Permiso</option>
                   <option value="Incapacidad" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Incapacidad</option>
                   <option value="Renuncia" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Renuncia</option>
                   <option value="Duelo/Matrimonio/Nacimiento" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Duelo / Matrimonio / Nacimiento</option>
@@ -452,7 +498,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                   <option value="Pre-aprobado" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Pre-aprobado</option>
                   <option value="Consulta Médica - Emergencia" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Consulta Médica</option>
                   <option value="Otras Solicitudes de Colaborador" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Otras (Colaborador)</option>
-                  <option value="Otras Solicitudes de Jefatura" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Otras (Jefatura)</option>
+                  <option value="Otras Solicitudes de Jefatura" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Otras (Jefatura)</option> */}
                 </select>
                 <ChevronDown className={`absolute right-5 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none ${isDark ? 'text-white' : 'text-gray-600'}`} size={22} />
               </div>
@@ -469,27 +515,111 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                   transition={{ duration: 0.3 }}
                   className={`rounded-2xl p-10 space-y-8 ${isDark ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-gray-200'}`}
                 >
-                  {/* Advertencia para Vacaciones */}
+                  {/* Selector de Tipo de Acción de Vacaciones */}
                   {form.reason === 'Vacaciones' && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.3, delay: 0.1 }}
-                      className={`flex items-start gap-4 p-5 rounded-xl ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
-                    >
-                      <AlertCircle size={22} className="text-amber-500 flex-shrink-0 mt-0.5" />
-                      <div className="flex-1">
-                        <p className={`text-sm font-bold mb-2 font-inter ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
-                          Importante: Vacaciones Lineales
-                        </p>
-                        <p className={`text-xs leading-relaxed font-inter ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
-                          Cada gestión de vacaciones debe ser <span className="font-bold">continua y lineal</span>. Si deseas tomar vacaciones de forma no continua (por ejemplo: 2 días, trabajar 1 día, y luego tomar más días), debes crear <span className="font-bold">múltiples acciones de personal separadas</span> para cada período.
-                        </p>
+                    <>
+                      <div className="space-y-4">
+                        <label className={`text-xs font-semibold uppercase tracking-wider font-inter ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                          Tipo de Acción
+                        </label>
+                        <div className="relative">
+                          <select
+                            required
+                            className={`w-full px-6 py-5 rounded-2xl text-base font-medium transition-all duration-300 appearance-none font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 pr-12 ${isDark ? 'bg-white/5 text-white border border-white/10 hover:bg-white/8' : 'bg-white text-gray-900 border border-gray-200 hover:bg-gray-100'}`}
+                            value={form.vacationType}
+                            onChange={(e) => handleInputChange('vacationType', e.target.value)}
+                          >
+                            <option value="" disabled className={isDark ? 'bg-zinc-900' : 'bg-white'}>
+                              Seleccionar tipo de vacaciones a realizar
+                            </option>
+                            <option value="vacaciones-dias" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>
+                              Vacaciones (Días)
+                            </option>
+                            <option value="pago-prima-vacacional" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>
+                              Pago de Prima Vacacional
+                            </option>
+                            <option value="ambos" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>
+                              Ambos (Días + Prima Vacacional)
+                            </option>
+                          </select>
+                          <ChevronDown className={`absolute right-5 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none ${isDark ? 'text-white' : 'text-gray-600'}`} size={20} />
+                        </div>
                       </div>
-                    </motion.div>
+
+                      {/* Advertencia para Vacaciones con días */}
+                      {(form.vacationType === 'vacaciones-dias' || form.vacationType === 'ambos') && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, delay: 0.1 }}
+                          className={`flex items-start gap-4 p-5 rounded-xl ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
+                        >
+                          <AlertCircle size={22} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className={`text-sm font-bold mb-2 font-inter ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
+                              Importante: Vacaciones Lineales
+                            </p>
+                            <p className={`text-xs leading-relaxed font-inter ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
+                              Cada gestión de vacaciones debe ser <span className="font-bold">continua y lineal</span>. Si deseas tomar vacaciones de forma no continua (por ejemplo: 2 días, trabajar 1 día, y luego tomar más días), debes crear <span className="font-bold">múltiples acciones de personal separadas</span> para cada período.
+                            </p>
+                          </div>
+                        </motion.div>
+                      )}
+
+                      {/* Información para Pago de Prima Vacacional */}
+                      {(form.vacationType === 'pago-prima-vacacional' || form.vacationType === 'ambos') && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, delay: 0.15 }}
+                          className={`flex items-start gap-4 p-5 rounded-xl ${isDark ? 'bg-blue-500/10 border border-blue-500/30' : 'bg-blue-50 border border-blue-200'}`}
+                        >
+                          <AlertCircle size={22} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className={`text-sm font-bold mb-2 font-inter ${isDark ? 'text-blue-300' : 'text-blue-800'}`}>
+                              Importante: Fecha de Pago de Prima Vacacional
+                            </p>
+                            <p className={`text-xs leading-relaxed font-inter ${isDark ? 'text-blue-200/80' : 'text-blue-700'}`}>
+                              Por defecto, el pago de prima vacacional se aplicará el <span className="font-bold">día 30 de cada mes en días hábiles</span>. Si en algún caso deseas solicitar el pago para una quincena antes, debes <span className="font-bold">contactar directamente con el departamento de Recursos Humanos (RRHH)</span>.
+                            </p>
+                          </div>
+                        </motion.div>
+                      )}
+                    </>
                   )}
 
-                  {['Vacaciones', 'Permiso', 'Incapacidad', 'Home Office', 'Goce de dias libres compensatorios', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason) && (
+                  {/* Fechas para Vacaciones con días o Ambos */}
+                  {form.reason === 'Vacaciones' && (form.vacationType === 'vacaciones-dias' || form.vacationType === 'ambos') && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-3">
+                        <label className={`text-xs font-semibold uppercase tracking-wider font-inter ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                          Fecha Inicio
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}
+                          value={form.startDate}
+                          onChange={(e) => handleInputChange('startDate', e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-3">
+                        <label className={`text-xs font-semibold uppercase tracking-wider font-inter ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                          Fecha Fin
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}
+                          value={form.endDate}
+                          onChange={(e) => handleInputChange('endDate', e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Fechas para otras gestiones (no Vacaciones) */}
+                  {['Permiso', 'Incapacidad', 'Home Office', 'Goce de dias libres compensatorios', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason) && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-3">
                         <label className={`text-xs font-semibold uppercase tracking-wider font-inter ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
