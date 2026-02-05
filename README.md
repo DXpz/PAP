@@ -1,20 +1,71 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# PAP — Portal de Acción de Personal
 
-# Run and deploy your AI Studio app
+Aplicación web para gestionar solicitudes de personal: vacaciones, incapacidades, permisos y otras peticiones. Incluye tema claro/oscuro, formularios dinámicos y envío a sistemas externos.
 
-This contains everything you need to run your app locally.
+**Demo:** [pap-livid.vercel.app](https://pap-livid.vercel.app)
 
-View your app in AI Studio: https://ai.studio/apps/drive/1suN3ZwsIYM5GMh--FQIKJOUmvd517YTN
+---
 
-## Run Locally
+## Stack
 
-**Prerequisites:**  Node.js
+- **React 19** + **TypeScript**
+- **Vite 6** — build y dev server
+- **Framer Motion** — animaciones
+- **Lucide React** — iconos
+- **Vercel** — hosting y serverless API
+
+---
+
+## Requisitos
+
+- [Node.js](https://nodejs.org/) (v18 o superior)
+- [npm](https://www.npmjs.com/) (o `corepack enable` si usas Node 20+)
+
+---
+
+## Instalación
+
+```bash
+# Clonar el repositorio
+git clone https://github.com/DXpz/PAP.git
+cd PAP
+
+# Instalar dependencias
+npm install
+```
+
+---
+
+## Scripts
+
+| Comando           | Descripción                |
+|-------------------|----------------------------|
+| `npm run dev`     | Servidor de desarrollo     |
+| `npm run build`   | Build de producción        |
+| `npm run preview` | Vista previa del build     |
+
+---
+
+## Estructura del proyecto
+
+```
+PAP/
+├── api/                 # Rutas serverless (Vercel)
+│   ├── getActiveUsers.ts   # Listado de jefes activos
+│   └── proxy/              # Proxy al backend (san.red.com.sv)
+├── components/
+│   ├── ActionPortal.tsx       # Formularios y flujo principal
+│   ├── AnimatedBackground.tsx # Fondo animado
+│   └── GeometricBackground.tsx
+├── App.tsx
+├── index.html
+├── index.tsx
+├── types.ts
+├── vite.config.ts
+└── vercel.json
+```
+
+---
 
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+
