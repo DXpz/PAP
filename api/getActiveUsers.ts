@@ -68,22 +68,35 @@ export default async function handler(
                 console.warn('⚠️ WARNING: Content-Type es', contentType, 'pero se parseó como JSON correctamente');
             }
 
-            // 🔒 SECURITY: Filtrar datos sensibles antes de enviar al frontend
-            // Solo devolver los campos mínimos necesarios para el dropdown de jefes
+            // Normalizar usuario: aceptar variables antiguas y nuevas de la API
+            const pick = (obj: any, ...keys: string[]) => {
+                for (const k of keys) if (obj != null && obj[k] != null && String(obj[k]).trim() !== '') return String(obj[k]).trim();
+                return '';
+            };
+
+            // 🔒 SECURITY: Filtrar datos sensibles y normalizar campos (antiguos + nuevos)
             if (data.data && Array.isArray(data.data)) {
                 console.log('🔒 SECURITY: Filtrando datos sensibles. Usuarios originales:', data.data.length);
+                const first = data.data[0];
+                if (first && typeof first === 'object') console.log('📦 Primer usuario - keys:', Object.keys(first).join(', '));
 
-                const filteredData = data.data.map((user: any) => ({
-                    // Solo devolver 3 campos necesarios
-                    name: user.ananam || user.fullName || user.name || '',
-                    email: user.anamai || user.email || '',
-                    position: user.anapos || user.position || ''
-                    // NO devolver: anacod, anarea, anapai, status, anajef, nombre_jefe, correo_jefe
-                })).filter((user: any) => user.name && user.email); // Eliminar usuarios sin nombre o email
+                const filteredData = data.data.map((user: any) => {
+                    const name = pick(user, 'ananam', 'fullName', 'name', 'nombre', 'nombre_completo');
+                    const email = pick(user, 'anamai', 'email', 'correo', 'mail', 'e-mail');
+                    const position = pick(user, 'anapos', 'position', 'cargo', 'puesto', 'titulo');
+                    const nombreJefe = pick(user, 'Nombre_jefe', 'nombre_jefe', 'nombreJefe', 'jefe', 'boss');
+                    const correoJefe = pick(user, 'Correo_jefe', 'correo_jefe', 'correoJefe', 'email_jefe', 'jefe_email');
+                    const extra: Record<string, unknown> = {};
+                    const allowedExtra = ['area', 'department', 'departamento', 'id', 'codigo', 'anacod', 'anarea'];
+                    for (const key of allowedExtra) if (user[key] != null) extra[key] = user[key];
+                    if (nombreJefe) extra.nombre_jefe = nombreJefe;
+                    if (correoJefe) extra.correo_jefe = correoJefe;
+
+                    return { name, email, position, ...extra };
+                }).filter((u: { name: string; email: string }) => u.name && u.email);
 
                 console.log('🔒 SECURITY: Datos filtrados. Usuarios finales:', filteredData.length);
 
-                // Reemplazar el array original con el filtrado
                 data = {
                     ok: data.ok,
                     status: data.status,
