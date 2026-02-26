@@ -159,6 +159,24 @@ function DateInputDDMMYYYY({
   );
 }
 
+/** Genera opciones de hora desde las 6:00 AM hasta las 12:00 AM (medianoche) solo horas completas (sin minutos) */
+function generateTimeOptions(): Array<{ value: string; label: string }> {
+  const options: Array<{ value: string; label: string }> = [];
+  for (let hour = 6; hour <= 23; hour++) {
+    const hourStr = String(hour).padStart(2, '0');
+    const value = `${hourStr}:00`;
+    const period = hour < 12 ? 'AM' : 'PM';
+    const displayHour = hour === 0 ? 12 : hour === 12 ? 12 : hour > 12 ? hour - 12 : hour;
+    const label = `${displayHour}:00 ${period}`;
+    options.push({ value, label });
+  }
+  // Medianoche (12:00 AM)
+  options.push({ value: '24:00', label: '12:00 AM (Medianoche)' });
+  return options;
+}
+
+const TIME_OPTIONS = generateTimeOptions();
+
 const INITIAL_FORM_STATE: FormState = {
   email: '',
   country: '',
@@ -190,10 +208,17 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   const [showRejectionAnimation, setShowRejectionAnimation] = useState(false);
   const [rejectionMessage, setRejectionMessage] = useState('');
   const [showDaysAvailableAnimation, setShowDaysAvailableAnimation] = useState(false);
-  const [daysAvailableInfo, setDaysAvailableInfo] = useState<{ remainingDays?: number; requestedDays?: number; message?: string } | null>(null);
+  const [daysAvailableInfo, setDaysAvailableInfo] = useState<{
+    remainingDays?: number;
+    requestedDays?: number;
+    message?: string;
+    /** Fecha oficial de retorno enviada por el webhook, ya formateada en DD/MM/YYYY */
+    returnDateText?: string;
+  } | null>(null);
   const [isValidatingComment, setIsValidatingComment] = useState(false);
   const [showCommentSuccessAnimation, setShowCommentSuccessAnimation] = useState(false);
   const [showCommentRejectionAnimation, setShowCommentRejectionAnimation] = useState(false);
+  const [showEmergencyAttachment, setShowEmergencyAttachment] = useState(false);
   const [commentValidationMessage, setCommentValidationMessage] = useState('');
   const [commentValidated, setCommentValidated] = useState(false);
   const [daysValidated, setDaysValidated] = useState(false);
@@ -283,9 +308,13 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
       const notAvailable =
         !checkResponse.ok ||
         (checkData &&
-          (checkData.available === false ||
+          (
+            checkData.available === false ||
             checkData.hasDays === false ||
-            checkData.status === 'denied'));
+            checkData.status === 'denied' ||
+            // Nuevo formato: tiene_dias_disponibles: true/false
+            checkData.tiene_dias_disponibles === false
+          ));
 
       lastDaysCheckRef.current = {
         start: form.startDate,
@@ -307,11 +336,32 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
         return false;
       }
 
+      // Procesar nuevo formato del webhook:
+      // {
+      //   tiene_dias_disponibles: true/false,
+      //   fecha_retorno_oficial: "23/02/2026",
+      //   dias_disponibles: 10,
+      // }
+      let returnDateText: string | undefined;
+      const fechaRetornoOficial = checkData?.fecha_retorno_oficial;
+      if (typeof fechaRetornoOficial === 'string' && fechaRetornoOficial.trim()) {
+        // Intentar parsear DD/MM/YYYY -> YYYY-MM-DD para reutilizar los formateadores existentes
+        const iso = parseDDMMYYYYToISO(fechaRetornoOficial.trim());
+        if (iso) {
+          returnDateText = formatDateDDMMYYYY(new Date(iso + 'T12:00:00'));
+        } else {
+          // Si no se puede parsear, mostrar tal cual
+          returnDateText = fechaRetornoOficial.trim();
+        }
+      }
+
       // Guardar información de días disponibles para mostrar al usuario
       setDaysAvailableInfo({
-        remainingDays: checkData?.remainingDays,
+        // Nuevo campo del webhook: dias_disponibles
+        remainingDays: checkData?.dias_disponibles ?? checkData?.remainingDays,
         requestedDays: checkData?.requestedDays,
         message: checkData?.message,
+        returnDateText,
       });
       setShowDaysAvailableAnimation(true);
       setTimeout(() => {
@@ -406,7 +456,8 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   }, [form.reason, form.startDate, form.endDate, validateVacationDays]);
 
   const reasonsRequiringEvidence: RequestReason[] = [
-    'Permiso', 'Incapacidad', 'Renuncia', 'Duelo/Matrimonio/Nacimiento', 'Pre-aprobado'
+    'Permiso', 'Incapacidad', 'Renuncia', 'Duelo/Matrimonio/Nacimiento', 'Pre-aprobado',
+    'Goce de dias libres compensatorios', 'Otras Solicitudes de Colaborador', 'Otras Solicitudes de Jefatura'
   ];
 
   const handleEmailChange = (value: string) => {
@@ -657,6 +708,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
           }
           setDaysValidated(false);
           setCommentValidated(false);
+          setShowEmergencyAttachment(false);
         }
         
         // Resetear validación de días y comentarios si cambian las fechas en Vacaciones
@@ -723,13 +775,22 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
         base64File = await fileToBase64(form.attachment);
       }
 
+      const now = new Date();
+      const fechaCreacion = formatDateDDMMYYYY(now);
+
+      // Para Consulta Médica - Emergencia sin adjunto, no enviar campos de archivo
+      const isEmergencyWithoutFile = form.reason === 'Consulta Médica - Emergencia' && !form.attachment;
+
       const payload = {
         ...form,
         vacationType: form.reason === 'Vacaciones' ? 'vacaciones-dias' : form.vacationType,
         paymentDate: form.paymentDate || undefined,
-        submittedAt: new Date().toISOString(),
-        attachmentName: form.attachment?.name || null,
-        attachmentData: base64File,
+        fecha_creacion: fechaCreacion,
+        submittedAt: now.toISOString(),
+        ...(!isEmergencyWithoutFile && {
+          attachmentName: form.attachment?.name || null,
+          attachmentData: base64File,
+        }),
       };
 
       const response = await fetch(WEBHOOK_URL, {
@@ -813,7 +874,55 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
       return true;
     }
 
-    const needsDates = ['Permiso', 'Incapacidad', 'Home Office', 'Goce de dias libres compensatorios', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason);
+    // Validaciones específicas para Permiso (solo una fecha)
+    if (form.reason === 'Permiso') {
+      if (!form.startDate) return false;
+      // Para Permiso, endDate debe ser igual a startDate (se establece automáticamente)
+      if (form.endDate !== form.startDate) return false;
+      
+      // Validar que fecha no sea antes de hoy (se puede seleccionar hoy, pero no días anteriores)
+      const today = new Date();
+      const minStart = today.toISOString().slice(0, 10);
+      if (form.startDate < minStart) return false;
+      
+      if (!form.startTime || !form.endTime) return false;
+      
+      // Validar que las horas estén en el rango permitido (6:00 AM - 6:00 PM)
+      if (form.startTime < '06:00' || form.startTime > '18:00') return false;
+      if (!form.endTime) return false; // La hora fin debe estar calculada
+      
+      // Validar que hora fin sea posterior a hora inicio
+      if (form.endTime <= form.startTime) return false;
+      
+      // Validar máximo 3 horas de permiso (solo horas completas)
+      const [startH] = form.startTime.split(':').map(Number);
+      const [endH] = form.endTime.split(':').map(Number);
+      const diffHours = endH - startH;
+      
+      // La diferencia debe ser exactamente 3 horas (o menos si se alcanza el límite de 18:00)
+      if (diffHours > 3) return false;
+      return true; // Permiso solo necesita fecha y horas, no necesita validación de fechas múltiples
+    }
+
+    // Validaciones específicas para Pre-aprobado: fecha (desde hoy) y hora hasta la que se trabajará
+    if (form.reason === 'Pre-aprobado') {
+      if (!form.startDate) return false;
+      // No puede ser antes de hoy, pero sí se permite hoy
+      const todayStr = new Date().toISOString().slice(0, 10);
+      if (form.startDate < todayStr) return false;
+      if (!form.startTime || !form.endTime) return false; // hora inicio y hora fin
+      if (form.endTime <= form.startTime) return false;
+      if (!form.attachment) return false;
+    }
+
+    // Goce de días libres: solo fecha inicio (mín hoy), endDate se iguala automáticamente
+    if (form.reason === 'Goce de dias libres compensatorios') {
+      if (!form.startDate) return false;
+      const todayStr = new Date().toISOString().slice(0, 10);
+      if (form.startDate < todayStr) return false;
+    }
+
+    const needsDates = ['Incapacidad', 'Home Office', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason);
     if (needsDates && (!form.startDate || !form.endDate)) return false;
     // Validar que fecha fin no sea anterior a fecha inicio ni a mañana
     if (needsDates && form.startDate && form.endDate) {
@@ -823,7 +932,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
       const minEnd = form.startDate >= minStart ? form.startDate : minStart;
       if (form.endDate < minEnd) return false;
     }
-    if (form.reason === 'Permiso' && (!form.startTime || !form.endTime)) return false;
+    
     if (form.reason === 'Incapacidad' && !form.incapacityDays) return false;
     if (reasonsRequiringEvidence.includes(form.reason as RequestReason) && !form.attachment) return false;
     return true;
@@ -833,6 +942,10 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const minVacacionesStart = tomorrow.toISOString().slice(0, 10);
+  
+  // Para Permiso: mínimo es hoy (se puede seleccionar hoy, pero no días anteriores)
+  const today = new Date();
+  const minPermisoDate = today.toISOString().slice(0, 10);
   
   // Calcular el mínimo para fecha fin: debe ser al menos mañana y no anterior a fecha inicio
   const minVacacionesEnd = form.startDate && form.startDate >= minVacacionesStart 
@@ -1172,9 +1285,15 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                   </option>
                   <option value="Vacaciones" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Vacaciones</option>
                   <option value="Incapacidad" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Incapacidad</option>
-                  {/* Opciones ocultas - mantener lógica intacta */}
-                  {/* <option value="Permiso" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Permiso</option>
+                  <option value="Permiso" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Permiso</option>
+                  <option value="Pre-aprobado" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Pre-aprobado</option>
+                  <option value="Goce de dias libres compensatorios" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Goce de días libres compensatorios</option>
+                  <option value="Consulta Médica - Emergencia" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Consulta Médica - Emergencia</option>
                   <option value="Renuncia" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Renuncia</option>
+                  <option value="Otras Solicitudes de Colaborador" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Otras solicitudes de colaborador</option>
+                  <option value="Otras Solicitudes de Jefatura" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Otras solicitudes de jefatura</option>
+                  {/* Opciones ocultas - mantener lógica intacta */}
+                  {/* <option value="Renuncia" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Renuncia</option>
                   <option value="Duelo/Matrimonio/Nacimiento" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Duelo / Matrimonio / Nacimiento</option>
                   <option value="Home Office" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Home Office</option>
                   <option value="Goce de dias libres compensatorios" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Días Compensatorios</option>
@@ -1268,7 +1387,9 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                             <span className={`text-xs font-semibold uppercase tracking-wider ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>Reincorporación a labores</span>
                             <p className={`text-sm font-medium mt-0.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                               Debe presentarse a trabajar el{' '}
-                              {formatDateDDMMYYYY(getNextBusinessDay(form.endDate))}
+                              {daysAvailableInfo?.returnDateText
+                                ? daysAvailableInfo.returnDateText
+                                : formatDateDDMMYYYY(getNextBusinessDay(form.endDate))}
                               .
                             </p>
                           </div>
@@ -1277,8 +1398,35 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                     </div>
                   )}
 
-                  {/* Fechas para otras gestiones (no Vacaciones) */}
-                  {['Permiso', 'Incapacidad', 'Home Office', 'Goce de dias libres compensatorios', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason) && (
+                  {/* Fecha única para Permiso */}
+                  {form.reason === 'Permiso' && (
+                    <div className="space-y-3">
+                      <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                        Fecha de Permiso
+                        <span className="relative group inline-flex">
+                          <AlertCircle size={16} className="text-amber-500 flex-shrink-0 cursor-help" />
+                          <span className={`absolute left-0 top-full z-10 mt-1 w-64 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                            Es el día que se desea pedir permiso. Se recomienda solicitarlo con anticipación de dos días si es posible.
+                          </span>
+                        </span>
+                      </label>
+                      <DateInputDDMMYYYY
+                        value={form.startDate}
+                        onChange={(v) => {
+                          handleInputChange('startDate', v);
+                          // Para Permiso, la fecha fin es la misma que la fecha inicio
+                          handleInputChange('endDate', v);
+                        }}
+                        required
+                        min={minPermisoDate}
+                        className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10 placeholder:text-white/40' : 'bg-white text-gray-900 border border-gray-200 placeholder:text-gray-400'}`}
+                        aria-label="Fecha de permiso"
+                      />
+                    </div>
+                  )}
+
+                  {/* Fechas para otras gestiones (no Vacaciones, no Permiso, no Goce) */}
+                  {['Incapacidad', 'Home Office', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason) && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-3">
                         <label className={`text-xs font-semibold uppercase tracking-wider font-inter ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
@@ -1308,32 +1456,270 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                     </div>
                   )}
 
+                  {/* Fecha para Goce de días libres compensatorios (solo inicio, mín hoy) */}
+                  {form.reason === 'Goce de dias libres compensatorios' && (
+                    <div className="space-y-3">
+                      <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                        <Calendar size={12} /> Fecha de Goce
+                        <span className="relative group inline-flex">
+                          <AlertCircle size={16} className="text-amber-500 flex-shrink-0 cursor-help" />
+                          <span className={`absolute left-0 top-full z-10 mt-1 w-64 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                            Día en el que se tomará el goce de días libres compensatorios. Puede ser el día actual o una fecha futura.
+                          </span>
+                        </span>
+                      </label>
+                      <DateInputDDMMYYYY
+                        value={form.startDate}
+                        onChange={(v) => {
+                          handleInputChange('startDate', v);
+                          handleInputChange('endDate', v);
+                        }}
+                        required
+                        min={minPermisoDate}
+                        className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10 placeholder:text-white/40' : 'bg-white text-gray-900 border border-gray-200 placeholder:text-gray-400'}`}
+                        aria-label="Fecha de goce"
+                      />
+                    </div>
+                  )}
+
                   {form.reason === 'Permiso' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-3">
+                          <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                            <Clock size={12} /> Hora Inicio
+                          </label>
+                          <div className="relative">
+                            <select
+                              required
+                              className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 appearance-none font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 pr-12 ${isDark ? 'bg-white/5 text-white border border-white/10 hover:bg-white/8' : 'bg-white text-gray-900 border border-gray-200 hover:bg-gray-50'}`}
+                              value={form.startTime}
+                              onChange={(e) => {
+                                const startTime = e.target.value;
+                                handleInputChange('startTime', startTime);
+                                
+                                // Calcular automáticamente la hora fin (hora inicio + 3 horas)
+                                if (startTime) {
+                                  const [startH] = startTime.split(':').map(Number);
+                                  const endHour = startH + 3;
+                                  
+                                  // Validar que no exceda las 6:00 PM (18:00)
+                                  if (endHour <= 18) {
+                                    const endTime = `${String(endHour).padStart(2, '0')}:00`;
+                                    handleInputChange('endTime', endTime);
+                                  } else {
+                                    // Si excede, usar 6:00 PM como máximo
+                                    handleInputChange('endTime', '18:00');
+                                  }
+                                } else {
+                                  handleInputChange('endTime', '');
+                                }
+                              }}
+                            >
+                              <option value="" disabled className={isDark ? 'bg-zinc-900' : 'bg-white'}>
+                                Seleccionar hora
+                              </option>
+                              {TIME_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value} className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <ChevronDown className={`absolute right-5 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none ${isDark ? 'text-white' : 'text-gray-600'}`} size={22} />
+                          </div>
+                          <p className={`text-xs font-inter ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                            Horario permitido: 6:00 AM - 6:00 PM
+                          </p>
+                        </div>
+                        <div className="space-y-3">
+                          <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                            <Clock size={12} /> Hora Fin
+                            <span className="relative group inline-flex">
+                              <AlertCircle size={16} className="text-amber-500 flex-shrink-0 cursor-help" />
+                              <span className={`absolute left-0 top-full z-10 mt-1 w-64 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                                Si el permiso excede las 3 horas, será considerado como permiso sin goce de sueldo.
+                              </span>
+                            </span>
+                          </label>
+                          <div className="relative">
+                            <select
+                              required
+                              disabled
+                              className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 appearance-none font-inter outline-none pr-12 cursor-not-allowed ${isDark ? 'bg-white/5 text-white/60 border border-white/10' : 'bg-gray-100 text-gray-600 border border-gray-200'}`}
+                              value={form.endTime}
+                            >
+                              <option value="" disabled className={isDark ? 'bg-zinc-900' : 'bg-white'}>
+                                {form.startTime ? 'Se calculará automáticamente' : 'Selecciona hora inicio primero'}
+                              </option>
+                              {form.endTime && (
+                                <option value={form.endTime} className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>
+                                  {TIME_OPTIONS.find(opt => opt.value === form.endTime)?.label || form.endTime}
+                                </option>
+                              )}
+                            </select>
+                            <ChevronDown className={`absolute right-5 top-1/2 -translate-y-1/2 opacity-20 pointer-events-none ${isDark ? 'text-white' : 'text-gray-600'}`} size={22} />
+                          </div>
+                          <p className={`text-xs font-inter ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                            Se calcula automáticamente: hora inicio + 3 horas
+                          </p>
+                        </div>
+                      </div>
+                      {form.startTime && form.endTime && (() => {
+                        const [startH] = form.startTime.split(':').map(Number);
+                        const [endH] = form.endTime.split(':').map(Number);
+                        const diffHours = endH - startH;
+                        
+                        if (diffHours > 3) {
+                          return (
+                            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl font-inter ${isDark ? 'bg-red-500/10 border border-red-500/30' : 'bg-red-50 border border-red-200'}`}>
+                              <AlertCircle size={18} className="text-red-500 flex-shrink-0" />
+                              <p className={`text-sm font-medium ${isDark ? 'text-red-300' : 'text-red-800'}`}>
+                                El permiso no puede exceder 3 horas. Duración actual: {diffHours} horas.
+                              </p>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className={`flex items-start gap-3 px-4 py-3 rounded-xl font-inter ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}>
+                            <AlertCircle size={18} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                            <div className="flex-1">
+                              <p className={`text-sm font-medium mb-2 ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
+                                Duración del permiso: {diffHours} {diffHours === 1 ? 'hora' : 'horas'} (máximo permitido: 3 horas)
+                              </p>
+                              <p className={`text-xs leading-relaxed ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
+                                <span className="font-semibold">Importante:</span> Cuando se retire y regrese, debe marcar su entrada y salida para evitar conflictos y llevar un registro adecuado.
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  {/* Fecha y hora para Pre-aprobado */}
+                  {form.reason === 'Pre-aprobado' && (
+                    <div className="space-y-6">
                       <div className="space-y-3">
                         <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                          <Clock size={12} /> Hora Inicio
+                          Fecha del Pre-aprobado
+                          <span className="relative group inline-flex">
+                            <AlertCircle size={16} className="text-amber-500 flex-shrink-0 cursor-help" />
+                            <span className={`absolute left-0 top-full z-10 mt-1 w-64 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                              Día en que se hará efectivo el pre-aprobado.
+                            </span>
+                          </span>
                         </label>
-                        <input
-                          type="time"
+                        <DateInputDDMMYYYY
+                          value={form.startDate}
+                          onChange={(v) => {
+                            handleInputChange('startDate', v);
+                            handleInputChange('endDate', v);
+                          }}
                           required
-                          className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}
-                          value={form.startTime}
-                          onChange={(e) => handleInputChange('startTime', e.target.value)}
+                          min={minPermisoDate}
+                          className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10 placeholder:text-white/40' : 'bg-white text-gray-900 border border-gray-200 placeholder:text-gray-400'}`}
+                          aria-label="Fecha del pre-aprobado"
                         />
                       </div>
-                      <div className="space-y-3">
-                        <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                          <Clock size={12} /> Hora Fin
-                        </label>
-                        <input
-                          type="time"
-                          required
-                          className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10' : 'bg-white text-gray-900 border border-gray-200'}`}
-                          value={form.endTime}
-                          onChange={(e) => handleInputChange('endTime', e.target.value)}
-                        />
-                      </div>
+
+                      {form.startDate && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3 }}
+                          className="grid grid-cols-1 md:grid-cols-2 gap-6"
+                        >
+                          {/* Hora Inicio */}
+                          <div className="space-y-3">
+                            <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                              <Clock size={12} /> Hora Inicio
+                              <span className="relative group inline-flex">
+                                <AlertCircle size={16} className="text-amber-500 flex-shrink-0 cursor-help" />
+                                <span className={`absolute left-0 top-full z-10 mt-1 w-64 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                                  Hora en la que comienza el tiempo adicional que el colaborador se quedará después de su jornada laboral.
+                                </span>
+                              </span>
+                            </label>
+                            <div className="relative">
+                              <select
+                                required
+                                className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 appearance-none font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 pr-12 ${isDark ? 'bg-white/5 text-white border border-white/10 hover:bg-white/8' : 'bg-white text-gray-900 border border-gray-200 hover:bg-gray-50'}`}
+                                value={form.startTime}
+                                onChange={(e) => {
+                                  handleInputChange('startTime', e.target.value);
+                                  // Resetear hora fin si es menor o igual a la nueva hora inicio
+                                  if (form.endTime && e.target.value >= form.endTime) {
+                                    handleInputChange('endTime', '');
+                                  }
+                                }}
+                              >
+                                <option value="" disabled className={isDark ? 'bg-zinc-900' : 'bg-white'}>
+                                  Seleccionar hora
+                                </option>
+                                {TIME_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value} className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <ChevronDown className={`absolute right-5 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none ${isDark ? 'text-white' : 'text-gray-600'}`} size={22} />
+                            </div>
+                          </div>
+
+                          {/* Hora Fin */}
+                          <div className="space-y-3">
+                            <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                              <Clock size={12} /> Hora Fin
+                              <span className="relative group inline-flex">
+                                <AlertCircle size={16} className="text-amber-500 flex-shrink-0 cursor-help" />
+                                <span className={`absolute left-0 top-full z-10 mt-1 w-64 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                                  Hora hasta la que el colaborador estará trabajando ese día antes de retirarse.
+                                </span>
+                              </span>
+                            </label>
+                            <div className="relative">
+                              <select
+                                required
+                                className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 appearance-none font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 pr-12 ${isDark ? 'bg-white/5 text-white border border-white/10 hover:bg-white/8' : 'bg-white text-gray-900 border border-gray-200 hover:bg-gray-50'}`}
+                                value={form.endTime}
+                                onChange={(e) => handleInputChange('endTime', e.target.value)}
+                              >
+                                <option value="" disabled className={isDark ? 'bg-zinc-900' : 'bg-white'}>
+                                  Seleccionar hora
+                                </option>
+                                {TIME_OPTIONS.filter(opt => !form.startTime || opt.value > form.startTime).map((option) => (
+                                  <option key={option.value} value={option.value} className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <ChevronDown className={`absolute right-5 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none ${isDark ? 'text-white' : 'text-gray-600'}`} size={22} />
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+
+                      {/* Aviso de radio/teléfono corporativo */}
+                      {form.startDate && form.startTime && form.endTime && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, delay: 0.1 }}
+                          className={`flex items-start gap-4 p-5 rounded-xl ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
+                        >
+                          <AlertCircle size={20} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 space-y-1">
+                            <p className={`text-sm font-bold font-inter ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
+                              Uso obligatorio del radio / teléfono corporativo
+                            </p>
+                            <ul className={`text-xs leading-relaxed font-inter space-y-1 list-disc list-inside ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
+                              <li>El equipo debe permanecer <span className="font-semibold">encendido</span> durante toda la jornada (normal y extraordinaria).</li>
+                              <li>El <span className="font-semibold">GPS debe estar activado</span> en todo momento.</li>
+                              <li><span className="font-semibold">Prohibido</span> apagar el equipo o desactivar el GPS durante la jornada.</li>
+                            </ul>
+                          </div>
+                        </motion.div>
+                      )}
                     </div>
                   )}
 
@@ -1365,9 +1751,36 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                     </div>
                   )}
 
-                  {reasonsRequiringEvidence.includes(form.reason as RequestReason) && (
+                  {reasonsRequiringEvidence.includes(form.reason as RequestReason) &&
+                   // Para Pre-aprobado: solo mostrar archivo si ya hay fecha, hora inicio y hora fin
+                   (form.reason !== 'Pre-aprobado' || (form.startDate && form.startTime && form.endTime)) &&
+                   // Para Goce: solo mostrar archivo si ya hay fecha seleccionada
+                   (form.reason !== 'Goce de dias libres compensatorios' || !!form.startDate) && (
                     <div className={`pt-8 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-                      <input ref={fileInputRef} type="file" className="hidden" id="file-upload" onChange={(e) => { if (e.target.files?.[0]) handleInputChange('attachment', e.target.files[0]); }} />
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        className="hidden"
+                        id="file-upload"
+                        // Solo se permiten archivos PDF en todos los casos
+                        accept="application/pdf"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          // Validación extra por si el navegador no respeta el accept
+                          if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+                            setRejectionMessage(`El formato "${file.name.split('.').pop()?.toUpperCase() || 'desconocido'}" no está permitido. Solo se aceptan archivos PDF.`);
+                            setShowRejectionAnimation(true);
+                            setTimeout(() => {
+                              setShowRejectionAnimation(false);
+                              setRejectionMessage('');
+                            }, 4200);
+                            if (fileInputRef.current) fileInputRef.current.value = '';
+                            return;
+                          }
+                          handleInputChange('attachment', file);
+                        }}
+                      />
                       <label
                         htmlFor="file-upload"
                         className={`flex items-center justify-between p-6 rounded-2xl border-2 border-dashed transition-all duration-300 cursor-pointer ${form.attachment ? 'bg-[#E60000]/10 border-[#E60000]/40' : isDark ? 'border-white/10 hover:border-[#E60000]/40 hover:bg-white/5' : 'border-gray-200 hover:border-[#E60000]/40 hover:bg-gray-50'}`}
@@ -1377,11 +1790,19 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                             {form.attachment ? <FileText size={24} className="text-[#E60000]" /> : <Upload size={24} className={isDark ? 'text-gray-400' : 'text-gray-500'} />}
                           </div>
                           <div>
-                            <p className={`text-base font-bold font-inter ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                            <p className={`text-base font-bold font-inter flex items-center gap-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                               {form.attachment ? form.attachment.name : 'Adjuntar Evidencia'}
+                              {!form.attachment && (
+                                <span className="relative group inline-flex" onClick={(e) => e.preventDefault()}>
+                                  <AlertCircle size={15} className="text-amber-500 flex-shrink-0 cursor-help" />
+                                  <span className={`absolute left-0 top-full z-10 mt-1 w-72 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                                    Sube un PDF que respalde tu solicitud, como un documento oficial, una carta con todos los detalles o cualquier evidencia relevante.
+                                  </span>
+                                </span>
+                              )}
                             </p>
                             <p className={`text-xs font-inter mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                              PDF, JPG, PNG (Max 5MB)
+                              Solo PDF (Max 5MB)
                             </p>
                           </div>
                         </div>
@@ -1404,11 +1825,32 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                     if (form.reason === 'Vacaciones') {
                       if (!daysValidated) return null;
                     }
-                    // Para otros tipos que requieren fechas: mostrar si las fechas están llenas
-                    else if (['Permiso', 'Incapacidad', 'Home Office', 'Goce de dias libres compensatorios', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason)) {
-                      if (!form.startDate || !form.endDate) return null;
+                    // Para Permiso: necesita fecha de permiso, horas Y archivo subido
+                    else if (form.reason === 'Permiso') {
+                      if (!form.startDate || !form.startTime || !form.endTime) return null;
+                      // Solo mostrar justificación después de subir el archivo
+                      if (!form.attachment) return null;
                     }
-                    // Para otros tipos sin fechas: mostrar inmediatamente
+                    // Para Goce de días libres: solo fecha inicio + archivo
+                    else if (form.reason === 'Goce de dias libres compensatorios') {
+                      if (!form.startDate) return null;
+                      if (!form.attachment) return null;
+                    }
+                    // Para otros tipos que requieren fechas: mostrar si las fechas están llenas
+                    else if (['Incapacidad', 'Home Office', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason)) {
+                      if (!form.startDate || !form.endDate) return null;
+                      // Si requiere evidencia, solo mostrar justificación después de subir el archivo
+                      if (reasonsRequiringEvidence.includes(form.reason as RequestReason) && !form.attachment) return null;
+                    }
+                    // Para Pre-aprobado: necesita fecha, hora inicio, hora fin Y archivo
+                    else if (form.reason === 'Pre-aprobado') {
+                      if (!form.startDate || !form.startTime || !form.endTime) return null;
+                      if (!form.attachment) return null;
+                    }
+                    // Para otros tipos sin fechas: mostrar inmediatamente (a menos que requieran evidencia)
+                    else if (reasonsRequiringEvidence.includes(form.reason as RequestReason)) {
+                      if (!form.attachment) return null;
+                    }
                     return (
                       <motion.div
                         initial={{ opacity: 0, y: 20 }}
@@ -1420,6 +1862,14 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                           <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                             <MessageSquare size={14} className="text-[#E60000]" />
                             Justificación
+                            {form.reason === 'Consulta Médica - Emergencia' && (
+                              <span className="relative group inline-flex">
+                                <AlertCircle size={15} className="text-amber-500 flex-shrink-0 cursor-help" />
+                                <span className={`absolute left-0 top-full z-10 mt-1 w-72 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                                  Por tratarse de una emergencia, el adjunto con la cita o documento médico podrá ser presentado posteriormente. Por ahora solo se validará la justificación.
+                                </span>
+                              </span>
+                            )}
                           </label>
                           <textarea
                             required
@@ -1434,7 +1884,86 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                               }
                             }}
                           />
+                          {form.reason === 'Consulta Médica - Emergencia' && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 6 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ duration: 0.3 }}
+                              className={`flex items-start gap-3 p-4 rounded-xl ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
+                            >
+                              <AlertCircle size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                              <div className="flex-1 space-y-2">
+                                <p className={`text-xs leading-relaxed font-inter ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
+                                  <span className="font-semibold">Recuerda:</span> Deberás subir el adjunto con la cita médica o documentación correspondiente una vez que dispongas de ella. Este documento será requerido para cerrar la solicitud.
+                                </p>
+                                {!showEmergencyAttachment && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowEmergencyAttachment(true)}
+                                    className={`text-xs font-semibold underline underline-offset-2 transition-colors font-inter ${isDark ? 'text-amber-300 hover:text-amber-100' : 'text-amber-800 hover:text-amber-600'}`}
+                                  >
+                                    ¿Ya tienes la cita médica? Súbela aquí →
+                                  </button>
+                                )}
+                              </div>
+                            </motion.div>
+                          )}
+
+                          {/* Adjunto opcional para Consulta Médica - Emergencia */}
+                          {form.reason === 'Consulta Médica - Emergencia' && showEmergencyAttachment && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ duration: 0.35 }}
+                            >
+                              <input
+                                ref={fileInputRef}
+                                type="file"
+                                className="hidden"
+                                id="file-upload-emergency"
+                                accept="application/pdf"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+                                    setRejectionMessage(`El formato "${file.name.split('.').pop()?.toUpperCase() || 'desconocido'}" no está permitido. Solo se aceptan archivos PDF.`);
+                                    setShowRejectionAnimation(true);
+                                    setTimeout(() => { setShowRejectionAnimation(false); setRejectionMessage(''); }, 4200);
+                                    if (fileInputRef.current) fileInputRef.current.value = '';
+                                    return;
+                                  }
+                                  handleInputChange('attachment', file);
+                                }}
+                              />
+                              <label
+                                htmlFor="file-upload-emergency"
+                                className={`flex items-center justify-between p-5 rounded-2xl border-2 border-dashed transition-all duration-300 cursor-pointer ${form.attachment ? 'bg-[#E60000]/10 border-[#E60000]/40' : isDark ? 'border-white/10 hover:border-[#E60000]/40 hover:bg-white/5' : 'border-gray-200 hover:border-[#E60000]/40 hover:bg-gray-50'}`}
+                              >
+                                <div className="flex items-center gap-4">
+                                  <div className={`p-3 rounded-xl ${form.attachment ? 'bg-[#E60000]/20' : isDark ? 'bg-white/5' : 'bg-gray-100'}`}>
+                                    {form.attachment ? <FileText size={22} className="text-[#E60000]" /> : <Upload size={22} className={isDark ? 'text-gray-400' : 'text-gray-500'} />}
+                                  </div>
+                                  <div>
+                                    <p className={`text-sm font-bold font-inter ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                                      {form.attachment ? form.attachment.name : 'Adjuntar cita médica'}
+                                    </p>
+                                    <p className={`text-xs font-inter mt-0.5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Solo PDF (Max 5MB)</p>
+                                  </div>
+                                </div>
+                                {form.attachment && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.preventDefault(); handleInputChange('attachment', null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                                    className="p-2 rounded-full hover:bg-white/10 text-[#E60000] transition-all"
+                                  >
+                                    <X size={18} />
+                                  </button>
+                                )}
+                              </label>
+                            </motion.div>
+                          )}
                         </div>
+
                       </motion.div>
                     );
                   })()}
