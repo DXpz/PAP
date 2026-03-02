@@ -22,6 +22,7 @@ const LOGO_URL = 'https://static.wixstatic.com/media/98a19d_504d5e7478054d248444
 const WEBHOOK_URL = 'https://hook.eu2.make.com/8pscatpux73uutt3ce8skn4x7k4titqf';
 const DAYS_CHECK_WEBHOOK_URL = 'https://hook.eu2.make.com/7d9teuqggxkga8z9ocrffbudympskxo0';
 const COMMENT_VALIDATION_WEBHOOK_URL = 'https://hook.eu2.make.com/8bki1qcnemxr5ba38vq72sswgsthopb2';
+const PRIMA_VACACIONAL_WEBHOOK_URL = 'https://hook.eu2.make.com/bii2oymlshyggtouwvaca4i8na3hm021';
 const BOSSES_API_URL = '/api/getActiveUsers';
 const TITLE_TYPING = 'Acción de Personal';
 const TYPING_SPEED_MS = 55;
@@ -234,6 +235,11 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   /** Mapa email del usuario (de la API) -> área, para buscar nombre y área del jefe por su correo */
   const emailToAreaRef = useRef<Map<string, string>>(new Map());
   const lastDaysCheckRef = useRef<{ start: string; end: string; ok: boolean } | null>(null);
+  const daysCheckDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const commentValidationDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const primaVacacionalDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isCheckingPrima, setIsCheckingPrima] = useState(false);
+  const [primaVacacionalInfo, setPrimaVacacionalInfo] = useState<string | null>(null);
 
   useEffect(() => {
     if (typedTitleLength >= TITLE_TYPING.length) return;
@@ -303,80 +309,65 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
       // Si no se puede determinar con certeza que es true, se rechaza (fail-safe).
       let notAvailable: boolean;
 
+      const REJECTION_KEYWORDS = ['no aprobado', 'sin saldo', 'excedente', 'rechazado', 'denied', 'insuficiente'];
+      const isRejectionStatus = (val: string) => REJECTION_KEYWORDS.some(k => val.toLowerCase().includes(k));
+
       if (checkData !== null && 'tiene_dias_disponibles' in checkData) {
-        // Caso principal: campo presente en el JSON
         const raw = checkData.tiene_dias_disponibles;
         const tieneDias = raw === true || raw === 'true' || raw === 1;
-        notAvailable = !tieneDias;
+        const status: string = checkData?.resultado?.estatus || checkData?.Status || checkData?.status || '';
+        notAvailable = !tieneDias || (!!status && isRejectionStatus(status));
       } else if (checkData === null && rawText) {
-        // JSON no parseó pero hay texto — buscar "true"/"false" directamente en el texto
         const lower = rawText.toLowerCase();
         if (lower.includes('tiene_dias_disponibles')) {
-          notAvailable = !lower.includes('true');
+          const hasTrueFlag = lower.includes('true');
+          const hasRejection = REJECTION_KEYWORDS.some(k => lower.includes(k));
+          notAvailable = !hasTrueFlag || hasRejection;
         } else {
-          // Texto sin el campo esperado — rechazar por seguridad
           notAvailable = true;
         }
       } else if (!checkResponse.ok) {
         notAvailable = true;
       } else {
-        // Respuesta vacía o sin el campo — rechazar por seguridad
         notAvailable = true;
       }
 
-      if (notAvailable) {
-        // Intentar leer Dias_pendientes desde checkData (JSON válido) o desde rawText (JSON malformado)
-        let diasPend: number | null = null;
+      // Helpers para extraer campos del nuevo formato
+      const extractDiasPendientes = (): number | null => {
         if (checkData !== null) {
-          const val = checkData?.Dias_pendientes ?? checkData?.dias_pendientes ?? checkData?.dias_disponibles ?? checkData?.remainingDays;
-          if (val !== undefined && val !== null) diasPend = Number(val);
+          const val = checkData?.dias_pendientes_actuales ?? checkData?.Dias_pendientes ?? checkData?.dias_pendientes ?? checkData?.dias_disponibles;
+          if (val !== undefined && val !== null) return Number(val);
         }
-        if (diasPend === null && rawText) {
-          // Extraer número del campo Dias_pendientes aunque el JSON no tenga comillas
-          const match = rawText.match(/Dias_pendientes\s*[":]*\s*(\d+)/i);
-          if (match) diasPend = Number(match[1]);
-        }
-        setDiasPendientes(diasPend);
-        const mensajeRechazo = checkData?.message || checkData?.error ||
+        const match = rawText.match(/dias_pendientes_actuales\s*[":]*\s*(\d+)/i) || rawText.match(/Dias_pendientes\s*[":]*\s*(\d+)/i);
+        return match ? Number(match[1]) : null;
+      };
+
+      const extractReturnDate = (): string | undefined => {
+        const raw = checkData?.resultado?.fecha_retorno_oficial ?? checkData?.fecha_retorno_oficial;
+        if (typeof raw !== 'string' || !raw.trim() || raw.trim().toLowerCase() === 'n/a') return undefined;
+        const iso = parseDDMMYYYYToISO(raw.trim());
+        return iso ? formatDateDDMMYYYY(new Date(iso + 'T12:00:00')) : raw.trim();
+      };
+
+      if (notAvailable) {
+        setDiasPendientes(extractDiasPendientes());
+        const mensajeRechazo =
+          checkData?.resultado?.mensaje || checkData?.resultado?.estatus ||
+          checkData?.message || checkData?.error ||
           'Los días solicitados superan tu saldo de días disponibles.';
         setRejectionMessage(mensajeRechazo);
         setShowRejectionAnimation(true);
-        setTimeout(() => {
-          setShowRejectionAnimation(false);
-          setRejectionMessage('');
-        }, 4200);
+        setTimeout(() => { setShowRejectionAnimation(false); setRejectionMessage(''); }, 4200);
         setDaysValidated(false);
         return false;
       }
 
-      // Procesar nuevo formato del webhook:
-      // {
-      //   tiene_dias_disponibles: true/false,
-      //   fecha_retorno_oficial: "23/02/2026",
-      //   dias_disponibles: 10,
-      // }
-      let returnDateText: string | undefined;
-      const fechaRetornoOficial = checkData?.fecha_retorno_oficial;
-      if (typeof fechaRetornoOficial === 'string' && fechaRetornoOficial.trim()) {
-        // Intentar parsear DD/MM/YYYY -> YYYY-MM-DD para reutilizar los formateadores existentes
-        const iso = parseDDMMYYYYToISO(fechaRetornoOficial.trim());
-        if (iso) {
-          returnDateText = formatDateDDMMYYYY(new Date(iso + 'T12:00:00'));
-        } else {
-          // Si no se puede parsear, mostrar tal cual
-          returnDateText = fechaRetornoOficial.trim();
-        }
-      }
-
-      // Limpiar días pendientes (ya que ahora sí tiene días disponibles)
       setDiasPendientes(null);
-
-      // Guardar información de días disponibles para mostrar al usuario
       setDaysAvailableInfo({
-        remainingDays: checkData?.Dias_pendientes ?? checkData?.dias_disponibles ?? checkData?.remainingDays,
-        requestedDays: checkData?.requestedDays,
-        message: checkData?.message,
-        returnDateText,
+        remainingDays: checkData?.dias_pendientes_actuales ?? checkData?.Dias_pendientes ?? checkData?.dias_disponibles,
+        requestedDays: checkData?.dias_solicitados ?? checkData?.Dias_solicitados ?? checkData?.requestedDays,
+        message: checkData?.resultado?.mensaje || checkData?.message,
+        returnDateText: extractReturnDate(),
       });
       setShowDaysAvailableAnimation(true);
       setTimeout(() => {
@@ -463,12 +454,49 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
     fetchBosses();
   }, []);
 
-  // Validar días disponibles en tiempo real cuando se selecciona un rango de Vacaciones
+  // Validar días disponibles con debounce — espera 1.5s tras el último cambio
   useEffect(() => {
+    if (daysCheckDebounceRef.current) clearTimeout(daysCheckDebounceRef.current);
     if (form.reason === 'Vacaciones' && form.startDate && form.endDate) {
-      void validateVacationDays();
+      daysCheckDebounceRef.current = setTimeout(() => {
+        void validateVacationDays();
+      }, 1500);
     }
+    return () => { if (daysCheckDebounceRef.current) clearTimeout(daysCheckDebounceRef.current); };
   }, [form.reason, form.startDate, form.endDate, validateVacationDays]);
+
+  // Consultar webhook de prima vacacional con delay de 3s al seleccionarla
+  useEffect(() => {
+    if (primaVacacionalDebounceRef.current) clearTimeout(primaVacacionalDebounceRef.current);
+    setPrimaVacacionalInfo(null);
+    if (form.reason === 'Vacaciones' && (form.vacationType === 'pago-prima-vacacional' || form.vacationType === 'ambos')) {
+      primaVacacionalDebounceRef.current = setTimeout(async () => {
+        try {
+          setIsCheckingPrima(true);
+          const res = await fetch(PRIMA_VACACIONAL_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: form.email,
+              pais: form.country,
+              jefe_inmediato: form.immediateBoss,
+              correo_jefe: form.bossEmail,
+              tipo_solicitud: form.vacationType,
+            }),
+          });
+          const text = await res.text();
+          let msg: string | null = null;
+          try {
+            const data = JSON.parse(text);
+            msg = data?.mensaje || data?.message || data?.resultado || null;
+          } catch { if (text?.trim()) msg = text.trim(); }
+          setPrimaVacacionalInfo(msg);
+        } catch { setPrimaVacacionalInfo(null); }
+        finally { setIsCheckingPrima(false); }
+      }, 3000);
+    }
+    return () => { if (primaVacacionalDebounceRef.current) clearTimeout(primaVacacionalDebounceRef.current); };
+  }, [form.reason, form.vacationType, form.email, form.immediateBoss, form.country, form.bossEmail]);
 
   const reasonsRequiringEvidence: RequestReason[] = [
     'Permiso', 'Incapacidad', 'Renuncia', 'Duelo/Matrimonio/Nacimiento', 'Pre-aprobado',
@@ -483,12 +511,46 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
     else if (lowerEmail.includes('.gt')) detectedCountry = 'Guatemala';
 
     const jefeInfo = trimmedEmail ? emailToJefeRef.current.get(lowerEmail) : null;
+    const perdióJefe = !jefeInfo && !!form.immediateBoss;
+
+    if (perdióJefe) {
+      if (daysCheckDebounceRef.current) clearTimeout(daysCheckDebounceRef.current);
+      if (commentValidationDebounceRef.current) clearTimeout(commentValidationDebounceRef.current);
+      if (primaVacacionalDebounceRef.current) clearTimeout(primaVacacionalDebounceRef.current);
+      setDaysValidated(false);
+      setCommentValidated(false);
+      setDaysAvailableInfo(null);
+      setDiasPendientes(null);
+      setCommentValidationMessage('');
+      setShowEmergencyAttachment(false);
+      setPrimaVacacionalInfo(null);
+      setIsCheckingPrima(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setForm(prev => ({
+        ...prev,
+        email: trimmedEmail,
+        country: detectedCountry,
+        immediateBoss: '',
+        bossEmail: '',
+        reason: '',
+        startDate: '',
+        endDate: '',
+        startTime: '',
+        endTime: '',
+        comments: '',
+        attachment: null,
+        incapacityDays: '',
+        vacationType: '',
+        paymentDate: '',
+      }));
+      return;
+    }
 
     setForm(prev => ({
       ...prev,
       email: trimmedEmail,
       country: detectedCountry,
-      ...(jefeInfo ? {} : { immediateBoss: '', bossEmail: '' })
+      ...(!jefeInfo && { immediateBoss: '', bossEmail: '' }),
     }));
 
     if (jefeInfo) {
@@ -732,6 +794,11 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
           setDiasPendientes(null);
           setCommentValidationMessage('');
           setShowEmergencyAttachment(false);
+          setPrimaVacacionalInfo(null);
+          setIsCheckingPrima(false);
+          if (daysCheckDebounceRef.current) clearTimeout(daysCheckDebounceRef.current);
+          if (commentValidationDebounceRef.current) clearTimeout(commentValidationDebounceRef.current);
+          if (primaVacacionalDebounceRef.current) clearTimeout(primaVacacionalDebounceRef.current);
           if (fileInputRef.current) fileInputRef.current.value = '';
         }
         
@@ -1408,36 +1475,50 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                         <ChevronDown className={`absolute right-5 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none ${isDark ? 'text-white' : 'text-gray-600'}`} size={20} />
                       </div>
 
-                      {/* Fecha de pago — calculada automáticamente al fin de mes */}
+                      {/* Fecha de pago — calculada automáticamente al fin de mes + info del webhook */}
                       {(form.vacationType === 'pago-prima-vacacional' || form.vacationType === 'ambos') && (
                         <motion.div
                           initial={{ opacity: 0, y: 8 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.3 }}
-                          className={`flex items-center gap-3 px-4 py-3 rounded-xl ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
+                          className={`flex items-start gap-3 px-4 py-3 rounded-xl ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
                         >
-                          <AlertCircle size={18} className="text-amber-500 flex-shrink-0" />
-                          <div>
-                            <span className={`text-xs font-semibold uppercase tracking-wider ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>Fecha de pago de prima vacacional</span>
-                            <p className={`text-sm font-medium mt-0.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                              El pago se realizará el{' '}
-                              <span className="font-bold">
-                                {(() => {
-                                  const now = new Date();
-                                  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-                                  return formatDateDDMMYYYY(lastDay);
-                                })()}
-                              </span>
-                              {' '}(último día del mes en curso).
-                            </p>
+                          {isCheckingPrima
+                            ? <Loader2 size={18} className="text-amber-500 flex-shrink-0 animate-spin mt-0.5" />
+                            : <AlertCircle size={18} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                          }
+                          <div className="space-y-1">
+                            <span className={`text-xs font-semibold uppercase tracking-wider ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
+                              {isCheckingPrima ? 'Consultando información...' : 'Fecha de pago de prima vacacional'}
+                            </span>
+                            {!isCheckingPrima && (
+                              <>
+                                <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                                  El pago se realizará el{' '}
+                                  <span className="font-bold">
+                                    {(() => {
+                                      const now = new Date();
+                                      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                                      return formatDateDDMMYYYY(lastDay);
+                                    })()}
+                                  </span>
+                                  {' '}(último día del mes en curso).
+                                </p>
+                                {primaVacacionalInfo && (
+                                  <p className={`text-xs leading-relaxed ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
+                                    {primaVacacionalInfo}
+                                  </p>
+                                )}
+                              </>
+                            )}
                           </div>
                         </motion.div>
                       )}
                     </div>
                   )}
 
-                  {/* Fechas para Vacaciones */}
-                  {form.reason === 'Vacaciones' && (
+                  {/* Fechas para Vacaciones — no aplica para solo pago de prima */}
+                  {form.reason === 'Vacaciones' && form.vacationType !== 'pago-prima-vacacional' && (
                     <div className="space-y-6">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="space-y-3">
@@ -2012,9 +2093,13 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                             className={`w-full px-6 py-5 rounded-2xl text-base font-medium resize-none transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10 placeholder:text-white/30' : 'bg-gray-50 text-gray-900 border border-gray-200 placeholder:text-gray-400'}`}
                             value={form.comments}
                             onChange={(e) => handleInputChange('comments', e.target.value)}
-                            onBlur={async (e) => {
-                              if (form.reason && e.target.value.trim()) {
-                                await validateComment(e.target.value);
+                            onBlur={(e) => {
+                              const val = e.target.value;
+                              if (commentValidationDebounceRef.current) clearTimeout(commentValidationDebounceRef.current);
+                              if (form.reason && val.trim()) {
+                                commentValidationDebounceRef.current = setTimeout(() => {
+                                  void validateComment(val);
+                                }, 1000);
                               }
                             }}
                           />
