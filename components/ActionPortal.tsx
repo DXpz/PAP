@@ -208,6 +208,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   const [showRejectionAnimation, setShowRejectionAnimation] = useState(false);
   const [rejectionMessage, setRejectionMessage] = useState('');
   const [showDaysAvailableAnimation, setShowDaysAvailableAnimation] = useState(false);
+  const [diasPendientes, setDiasPendientes] = useState<number | null>(null);
   const [daysAvailableInfo, setDaysAvailableInfo] = useState<{
     remainingDays?: number;
     requestedDays?: number;
@@ -270,16 +271,6 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
       return true;
     }
 
-    // Evitar llamadas repetidas si ya validamos este mismo rango con éxito
-    if (
-      lastDaysCheckRef.current &&
-      lastDaysCheckRef.current.start === form.startDate &&
-      lastDaysCheckRef.current.end === form.endDate &&
-      lastDaysCheckRef.current.ok
-    ) {
-      return true;
-    }
-
     try {
       setIsCheckingDays(true);
       const checkPayload = {
@@ -296,37 +287,59 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
         body: JSON.stringify(checkPayload),
       });
 
+      // Leer el cuerpo como texto primero para poder intentar múltiples parseos
+      const rawText = await checkResponse.text();
+
       let checkData: any = null;
       try {
-        checkData = await checkResponse.json();
+        checkData = JSON.parse(rawText);
       } catch {
-        // Si no devuelve JSON, dejamos checkData en null
+        // Si no es JSON válido, dejamos checkData en null
       }
 
       setIsCheckingDays(false);
 
-      const notAvailable =
-        !checkResponse.ok ||
-        (checkData &&
-          (
-            checkData.available === false ||
-            checkData.hasDays === false ||
-            checkData.status === 'denied' ||
-            // Nuevo formato: tiene_dias_disponibles: true/false
-            checkData.tiene_dias_disponibles === false
-          ));
+      // tiene_dias_disponibles es la única fuente de verdad.
+      // Si no se puede determinar con certeza que es true, se rechaza (fail-safe).
+      let notAvailable: boolean;
 
-      lastDaysCheckRef.current = {
-        start: form.startDate,
-        end: form.endDate,
-        ok: !notAvailable,
-      };
+      if (checkData !== null && 'tiene_dias_disponibles' in checkData) {
+        // Caso principal: campo presente en el JSON
+        const raw = checkData.tiene_dias_disponibles;
+        const tieneDias = raw === true || raw === 'true' || raw === 1;
+        notAvailable = !tieneDias;
+      } else if (checkData === null && rawText) {
+        // JSON no parseó pero hay texto — buscar "true"/"false" directamente en el texto
+        const lower = rawText.toLowerCase();
+        if (lower.includes('tiene_dias_disponibles')) {
+          notAvailable = !lower.includes('true');
+        } else {
+          // Texto sin el campo esperado — rechazar por seguridad
+          notAvailable = true;
+        }
+      } else if (!checkResponse.ok) {
+        notAvailable = true;
+      } else {
+        // Respuesta vacía o sin el campo — rechazar por seguridad
+        notAvailable = true;
+      }
 
       if (notAvailable) {
-        setRejectionMessage(
-          (checkData && (checkData.message || checkData.error)) ||
-            'No cuentas con días disponibles para este rango de fechas.'
-        );
+        // Intentar leer Dias_pendientes desde checkData (JSON válido) o desde rawText (JSON malformado)
+        let diasPend: number | null = null;
+        if (checkData !== null) {
+          const val = checkData?.Dias_pendientes ?? checkData?.dias_pendientes ?? checkData?.dias_disponibles ?? checkData?.remainingDays;
+          if (val !== undefined && val !== null) diasPend = Number(val);
+        }
+        if (diasPend === null && rawText) {
+          // Extraer número del campo Dias_pendientes aunque el JSON no tenga comillas
+          const match = rawText.match(/Dias_pendientes\s*[":]*\s*(\d+)/i);
+          if (match) diasPend = Number(match[1]);
+        }
+        setDiasPendientes(diasPend);
+        const mensajeRechazo = checkData?.message || checkData?.error ||
+          'Los días solicitados superan tu saldo de días disponibles.';
+        setRejectionMessage(mensajeRechazo);
         setShowRejectionAnimation(true);
         setTimeout(() => {
           setShowRejectionAnimation(false);
@@ -355,10 +368,12 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
         }
       }
 
+      // Limpiar días pendientes (ya que ahora sí tiene días disponibles)
+      setDiasPendientes(null);
+
       // Guardar información de días disponibles para mostrar al usuario
       setDaysAvailableInfo({
-        // Nuevo campo del webhook: dias_disponibles
-        remainingDays: checkData?.dias_disponibles ?? checkData?.remainingDays,
+        remainingDays: checkData?.Dias_pendientes ?? checkData?.dias_disponibles ?? checkData?.remainingDays,
         requestedDays: checkData?.requestedDays,
         message: checkData?.message,
         returnDateText,
@@ -700,21 +715,31 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
       setForm(prev => {
         const newForm = { ...prev, [field]: value };
 
-        // Limpiar fechas y resetear validaciones si cambia de reason
+        // Limpiar todo al cambiar de tipo de gestión
         if (field === 'reason') {
-          if (value !== 'Vacaciones') {
-            newForm.startDate = '';
-            newForm.endDate = '';
-          }
+          newForm.startDate = '';
+          newForm.endDate = '';
+          newForm.startTime = '';
+          newForm.endTime = '';
+          newForm.comments = '';
+          newForm.attachment = null;
+          newForm.incapacityDays = '';
+          newForm.vacationType = '';
+          newForm.paymentDate = '';
           setDaysValidated(false);
           setCommentValidated(false);
+          setDaysAvailableInfo(null);
+          setDiasPendientes(null);
+          setCommentValidationMessage('');
           setShowEmergencyAttachment(false);
+          if (fileInputRef.current) fileInputRef.current.value = '';
         }
         
         // Resetear validación de días y comentarios si cambian las fechas en Vacaciones
         if ((field === 'startDate' || field === 'endDate') && prev.reason === 'Vacaciones') {
           setDaysValidated(false);
           setCommentValidated(false);
+          setDiasPendientes(null);
         }
         
         // Resetear validación de comentarios si cambia el comentario
@@ -783,8 +808,14 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
 
       const payload = {
         ...form,
-        vacationType: form.reason === 'Vacaciones' ? 'vacaciones-dias' : form.vacationType,
-        paymentDate: form.paymentDate || undefined,
+        vacationType: form.reason === 'Vacaciones' ? (form.vacationType || 'vacaciones-dias') : form.vacationType,
+        paymentDate: (() => {
+          if (form.reason === 'Vacaciones' && (form.vacationType === 'pago-prima-vacacional' || form.vacationType === 'ambos')) {
+            const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+            return formatDateDDMMYYYY(lastDay);
+          }
+          return form.paymentDate || undefined;
+        })(),
         fecha_creacion: fechaCreacion,
         submittedAt: now.toISOString(),
         ...(!isEmergencyWithoutFile && {
@@ -868,9 +899,12 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
       tomorrow.setDate(tomorrow.getDate() + 1);
       const minStart = tomorrow.toISOString().slice(0, 10);
       if (form.startDate < minStart) return false;
-      // Validar que fecha fin no sea anterior a fecha inicio ni a mañana
       const minEnd = form.startDate >= minStart ? form.startDate : minStart;
       if (form.endDate < minEnd) return false;
+      // Requiere que los días estén validados y que se haya seleccionado tipo de solicitud
+      if (!daysValidated) return false;
+      if (!form.vacationType) return false;
+      // La fecha de pago de prima se calcula automáticamente — no requiere input del usuario
       return true;
     }
 
@@ -924,13 +958,12 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
 
     const needsDates = ['Incapacidad', 'Home Office', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason);
     if (needsDates && (!form.startDate || !form.endDate)) return false;
-    // Validar que fecha fin no sea anterior a fecha inicio ni a mañana
     if (needsDates && form.startDate && form.endDate) {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const minStart = tomorrow.toISOString().slice(0, 10);
-      const minEnd = form.startDate >= minStart ? form.startDate : minStart;
-      if (form.endDate < minEnd) return false;
+      const todayStr = new Date().toISOString().slice(0, 10);
+      // Fecha inicio no puede ser anterior a hoy
+      if (form.startDate < todayStr) return false;
+      // Fecha fin no puede ser anterior a fecha inicio
+      if (form.endDate < form.startDate) return false;
     }
     
     if (form.reason === 'Incapacidad' && !form.incapacityDays) return false;
@@ -1268,6 +1301,17 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
               </div>
             </div>
 
+            {/* Tipo de Gestión y campos — solo se muestran cuando el correo es válido y el jefe está cargado */}
+            <AnimatePresence>
+            {form.immediateBoss && (
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 16 }}
+                transition={{ duration: 0.4 }}
+                className="space-y-16"
+              >
+
             {/* Motivo */}
             <div className="space-y-4">
               <label className={`text-xs font-semibold uppercase tracking-wider font-inter ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
@@ -1337,6 +1381,61 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                     </motion.div>
                   )}
 
+                  {/* Tipo de solicitud de vacaciones — aparece inmediatamente */}
+                  {form.reason === 'Vacaciones' && (
+                    <div className="space-y-4">
+                      <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                        Tipo de solicitud
+                        <span className="relative group inline-flex">
+                          <AlertCircle size={15} className="text-amber-500 flex-shrink-0 cursor-help" />
+                          <span className={`absolute left-0 top-full z-10 mt-1 w-72 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                            Selecciona si deseas únicamente los días de vacaciones, el pago de prima vacacional, o ambos.
+                          </span>
+                        </span>
+                      </label>
+                      <div className="relative">
+                        <select
+                          required
+                          className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 appearance-none font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 pr-12 ${isDark ? 'bg-white/5 text-white border border-white/10 hover:bg-white/8' : 'bg-white text-gray-900 border border-gray-200 hover:bg-gray-50'}`}
+                          value={form.vacationType}
+                          onChange={(e) => handleInputChange('vacationType', e.target.value)}
+                        >
+                          <option value="" disabled className={isDark ? 'bg-zinc-900' : 'bg-white'}>Seleccionar tipo</option>
+                          <option value="vacaciones-dias" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Días de vacaciones</option>
+                          <option value="pago-prima-vacacional" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Pago de prima vacacional</option>
+                          <option value="ambos" className={isDark ? 'bg-zinc-900 text-white' : 'bg-white text-black'}>Ambos (días + prima vacacional)</option>
+                        </select>
+                        <ChevronDown className={`absolute right-5 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none ${isDark ? 'text-white' : 'text-gray-600'}`} size={20} />
+                      </div>
+
+                      {/* Fecha de pago — calculada automáticamente al fin de mes */}
+                      {(form.vacationType === 'pago-prima-vacacional' || form.vacationType === 'ambos') && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3 }}
+                          className={`flex items-center gap-3 px-4 py-3 rounded-xl ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
+                        >
+                          <AlertCircle size={18} className="text-amber-500 flex-shrink-0" />
+                          <div>
+                            <span className={`text-xs font-semibold uppercase tracking-wider ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>Fecha de pago de prima vacacional</span>
+                            <p className={`text-sm font-medium mt-0.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                              El pago se realizará el{' '}
+                              <span className="font-bold">
+                                {(() => {
+                                  const now = new Date();
+                                  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                                  return formatDateDDMMYYYY(lastDay);
+                                })()}
+                              </span>
+                              {' '}(último día del mes en curso).
+                            </p>
+                          </div>
+                        </motion.div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Fechas para Vacaciones */}
                   {form.reason === 'Vacaciones' && (
                     <div className="space-y-6">
@@ -1380,7 +1479,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                           />
                         </div>
                       </div>
-                      {form.endDate && (
+                      {form.endDate && daysValidated && (
                         <div className={`flex items-center gap-3 px-4 py-3 rounded-xl font-inter ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}>
                           <AlertCircle size={18} className="text-amber-500 flex-shrink-0" />
                           <div>
@@ -1394,6 +1493,24 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                             </p>
                           </div>
                         </div>
+                      )}
+
+                      {/* Notificación de días pendientes insuficientes */}
+                      {form.endDate && !daysValidated && diasPendientes !== null && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3 }}
+                          className={`flex items-center gap-3 px-4 py-3 rounded-xl font-inter ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
+                        >
+                          <AlertCircle size={18} className="text-amber-500 flex-shrink-0" />
+                          <div>
+                            <span className={`text-xs font-semibold uppercase tracking-wider ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>Días pendientes de goce</span>
+                            <p className={`text-sm font-medium mt-0.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                              Únicamente tienes <span className="font-bold">{diasPendientes} {diasPendientes === 1 ? 'día disponible' : 'días disponibles'}</span> de goce. Ajusta el rango de fechas.
+                            </p>
+                          </div>
+                        </motion.div>
                       )}
                     </div>
                   )}
@@ -1429,26 +1546,43 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                   {['Incapacidad', 'Home Office', 'Duelo/Matrimonio/Nacimiento'].includes(form.reason) && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-3">
-                        <label className={`text-xs font-semibold uppercase tracking-wider font-inter ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                        <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                           Fecha Inicio
+                          {form.reason === 'Incapacidad' && (
+                            <span className="relative group inline-flex">
+                              <AlertCircle size={15} className="text-amber-500 flex-shrink-0 cursor-help" />
+                              <span className={`absolute left-0 top-full z-10 mt-1 w-64 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                                Primer día de la incapacidad. No se pueden seleccionar fechas anteriores al día de hoy.
+                              </span>
+                            </span>
+                          )}
                         </label>
                         <DateInputDDMMYYYY
                           value={form.startDate}
                           onChange={(v) => handleInputChange('startDate', v)}
                           required
+                          min={minPermisoDate}
                           className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10 placeholder:text-white/40' : 'bg-white text-gray-900 border border-gray-200 placeholder:text-gray-400'}`}
                           aria-label="Fecha inicio"
                         />
                       </div>
                       <div className="space-y-3">
-                        <label className={`text-xs font-semibold uppercase tracking-wider font-inter ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                        <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                           Fecha Fin
+                          {form.reason === 'Incapacidad' && (
+                            <span className="relative group inline-flex">
+                              <AlertCircle size={15} className="text-amber-500 flex-shrink-0 cursor-help" />
+                              <span className={`absolute left-0 top-full z-10 mt-1 w-64 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                                Último día de la incapacidad. Debe ser igual o posterior a la fecha de inicio.
+                              </span>
+                            </span>
+                          )}
                         </label>
                         <DateInputDDMMYYYY
                           value={form.endDate}
                           onChange={(v) => handleInputChange('endDate', v)}
                           required
-                          min={minEndDate}
+                          min={form.startDate && form.startDate >= minPermisoDate ? form.startDate : minPermisoDate}
                           className={`w-full px-5 py-4 rounded-xl text-base font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10 placeholder:text-white/40' : 'bg-white text-gray-900 border border-gray-200 placeholder:text-gray-400'}`}
                           aria-label="Fecha fin"
                         />
@@ -2002,6 +2136,10 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                 )}
               </button>
             </div>
+
+              </motion.div>
+            )}
+            </AnimatePresence>
           </form>
         </motion.div>
       )}
