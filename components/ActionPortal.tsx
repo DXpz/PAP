@@ -60,6 +60,39 @@ function parseDDMMYYYYToISO(str: string): string {
   return `${date.getFullYear()}-${mm}-${dd}`;
 }
 
+/** Determina si el colaborador tiene derecho a prima vacacional en la fecha de creación.
+ *  Regla: tiene derecho a partir de su primer aniversario de ingreso (fecha_ingreso + 1 año).
+ *  Acepta fechas en ISO (YYYY-MM-DD) o en formato DD/MM/YYYY.
+ */
+function tienePrimaVacacionalHoy(fechaIngresoRaw: string | undefined, fechaCreacionRaw: string | undefined): boolean {
+  if (!fechaIngresoRaw || !fechaCreacionRaw) return false;
+
+  const normalizar = (raw: string): Date | null => {
+    if (!raw) return null;
+    // Si ya viene en ISO (YYYY-MM-DD)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) {
+      const d = new Date(raw.trim() + 'T12:00:00');
+      return isNaN(d.getTime()) ? null : d;
+    }
+    // Intentar DD/MM/YYYY u otros separadores
+    const iso = parseDDMMYYYYToISO(raw.trim());
+    if (!iso) return null;
+    const d = new Date(iso + 'T12:00:00');
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  const ingreso = normalizar(fechaIngresoRaw);
+  const creacion = normalizar(fechaCreacionRaw);
+  if (!ingreso || !creacion) return false;
+
+  // Aniversario: fecha_ingreso + 1 año
+  const aniversario = new Date(ingreso.getTime());
+  aniversario.setFullYear(aniversario.getFullYear() + 1);
+
+  // Tiene derecho si la fecha de creación es el mismo día o después del aniversario
+  return creacion.getTime() >= aniversario.getTime();
+}
+
 /** Input de fecha que muestra y acepta DD/MM/YYYY; value/onChange en YYYY-MM-DD; incluye botón de calendario. min/max en YYYY-MM-DD */
 function DateInputDDMMYYYY({
   value,
@@ -230,6 +263,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   const [typingBossLength, setTypingBossLength] = useState(0);
   const typingBossEmailRef = useRef('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const fetchDoneRef = useRef(false);
   const emailToJefeRef = useRef<Map<string, { nombre_jefe: string; correo_jefe: string }>>(new Map());
   /** Mapa email del usuario (de la API) -> área, para buscar nombre y área del jefe por su correo */
@@ -240,6 +274,9 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   const primaVacacionalDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isCheckingPrima, setIsCheckingPrima] = useState(false);
   const [primaVacacionalInfo, setPrimaVacacionalInfo] = useState<string | null>(null);
+  const [showPrimaSuccessAnimation, setShowPrimaSuccessAnimation] = useState(false);
+  const [showPrimaSkippedAnimation, setShowPrimaSkippedAnimation] = useState(false);
+  const [primaDisponible, setPrimaDisponible] = useState(false);
 
   useEffect(() => {
     if (typedTitleLength >= TITLE_TYPING.length) return;
@@ -465,12 +502,16 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
     return () => { if (daysCheckDebounceRef.current) clearTimeout(daysCheckDebounceRef.current); };
   }, [form.reason, form.startDate, form.endDate, validateVacationDays]);
 
-  // Consultar webhook de prima vacacional con delay de 3s al seleccionarla
+  // Consultar webhook de prima vacacional al seleccionarla
   useEffect(() => {
     if (primaVacacionalDebounceRef.current) clearTimeout(primaVacacionalDebounceRef.current);
     setPrimaVacacionalInfo(null);
+    setShowPrimaSuccessAnimation(false);
+    setShowPrimaSkippedAnimation(false);
+    setPrimaDisponible(false);
+
     if (form.reason === 'Vacaciones' && (form.vacationType === 'pago-prima-vacacional' || form.vacationType === 'ambos')) {
-      primaVacacionalDebounceRef.current = setTimeout(async () => {
+      (async () => {
         try {
           setIsCheckingPrima(true);
           const res = await fetch(PRIMA_VACACIONAL_WEBHOOK_URL, {
@@ -484,18 +525,58 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
               tipo_solicitud: form.vacationType,
             }),
           });
+
           const text = await res.text();
           let msg: string | null = null;
           try {
             const data = JSON.parse(text);
-            msg = data?.mensaje || data?.message || data?.resultado || null;
-          } catch { if (text?.trim()) msg = text.trim(); }
+            const status = String(data?.status || '').toLowerCase();
+
+            if (status === 'success') {
+              const base = data?.mensaje as string | undefined;
+              const periodo = data?.data?.periodo as string | undefined;
+              const instrucciones = data?.data?.instrucciones as string | undefined;
+              const fechaProc = data?.data?.fecha_proceso as string | undefined;
+
+              msg =
+                (base || '¡Buenas noticias! Tienes una prima vacacional disponible.') +
+                (periodo ? `\nPeríodo: ${periodo}.` : '') +
+                (instrucciones ? `\n${instrucciones}` : '') +
+                (fechaProc ? `\nFecha de proceso: ${fechaProc}.` : '');
+
+              setPrimaDisponible(true);
+              setShowPrimaSuccessAnimation(true);
+              setTimeout(() => setShowPrimaSuccessAnimation(false), 3500);
+            } else if (status === 'skipped') {
+              const base = data?.mensaje || 'Actualmente no tienes primas pendientes de cobro.';
+              const proximo = data?.detalles?.proximo_aniversario as string | undefined;
+              msg = proximo ? `${base}\n${proximo}` : base;
+
+              setPrimaDisponible(false);
+              setShowPrimaSkippedAnimation(true);
+              setTimeout(() => setShowPrimaSkippedAnimation(false), 3500);
+            } else {
+              msg = data?.mensaje || data?.message || data?.resultado || null;
+              setPrimaDisponible(false);
+            }
+          } catch {
+            if (text?.trim()) msg = text.trim();
+            setPrimaDisponible(false);
+          }
+
           setPrimaVacacionalInfo(msg);
-        } catch { setPrimaVacacionalInfo(null); }
-        finally { setIsCheckingPrima(false); }
-      }, 3000);
+        } catch {
+          setPrimaVacacionalInfo(null);
+          setPrimaDisponible(false);
+        } finally {
+          setIsCheckingPrima(false);
+        }
+      })();
     }
-    return () => { if (primaVacacionalDebounceRef.current) clearTimeout(primaVacacionalDebounceRef.current); };
+
+    return () => {
+      if (primaVacacionalDebounceRef.current) clearTimeout(primaVacacionalDebounceRef.current);
+    };
   }, [form.reason, form.vacationType, form.email, form.immediateBoss, form.country, form.bossEmail]);
 
   const reasonsRequiringEvidence: RequestReason[] = [
@@ -576,9 +657,18 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
           setIsValidatingComment(true);
           setCommentValidationMessage('');
 
+          const vacationSubtype: Record<string, string> = {
+            'vacaciones-dias': 'Vacaciones: Uso de días de vacaciones',
+            'pago-prima-vacacional': 'Vacaciones: Prima vacacional',
+            'ambos': 'Vacaciones: Ambos',
+          };
+          const tipoGestion = form.reason === 'Vacaciones' && form.vacationType
+            ? (vacationSubtype[form.vacationType] ?? 'Vacaciones')
+            : form.reason;
+
           const validationPayload = {
             motivo: form.reason,
-            tipoGestion: form.reason,
+            tipoGestion,
             comentario: comment.trim(),
           };
 
@@ -671,7 +761,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
           
           // Verificar PRIMERO el campo Resultado directamente
           if (resultadoText.includes('aceptado')) {
-            // Aceptado: mostrar animación de éxito
+            // Aceptado: mostrar animación de éxito y luego enviar automáticamente
             const rawMsg = validationData?.message || validationData?.Body || validationData?.body || resultado || '';
             const successMsg = cleanMessage(rawMsg);
             setCommentValidationMessage(successMsg);
@@ -681,6 +771,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
               setCommentValidationMessage('');
               setCommentValidated(true);
               resolve(true);
+              setTimeout(() => formRef.current?.requestSubmit(), 100);
             }, 3200);
             return;
           }
@@ -729,6 +820,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
               setCommentValidationMessage('');
               setCommentValidated(true);
               resolve(true);
+              setTimeout(() => formRef.current?.requestSubmit(), 100);
             }, 3200);
             return;
           }
@@ -1117,6 +1209,36 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
         )}
       </AnimatePresence>
 
+      {/* Overlay de carga para validación de Prima Vacacional */}
+      <AnimatePresence>
+        {isCheckingPrima && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center font-inter backdrop-blur-2xl"
+            style={{ backgroundColor: 'rgba(0, 0, 0, 0.95)' }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.5, ease: [0.34, 1.56, 0.64, 1] }}
+              className="flex flex-col items-center"
+            >
+              <div className="relative mb-8">
+                <div className="w-28 h-28 rounded-full flex items-center justify-center bg-gradient-to-br from-amber-400 to-amber-500 shadow-2xl shadow-amber-500/40">
+                  <Loader2 className="w-14 h-14 text-white animate-spin" strokeWidth={2.3} />
+                </div>
+              </div>
+              <h2 className="text-3xl font-bold text-white mb-3 font-inter">Verificando prima vacacional</h2>
+              <p className="text-sm text-gray-400 font-inter text-center max-w-md">
+                Por favor espera un momento mientras verificamos si cuentas con prima vacacional disponible.
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {showDaysAvailableAnimation && daysAvailableInfo && (
           <motion.div
@@ -1159,6 +1281,66 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
               {daysAvailableInfo.message && (
                 <p className="text-sm text-gray-400 font-inter text-center max-w-md">{daysAvailableInfo.message}</p>
               )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Overlay de resultado: Prima vacacional disponible */}
+      <AnimatePresence>
+        {showPrimaSuccessAnimation && primaVacacionalInfo && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center font-inter backdrop-blur-2xl"
+            style={{ backgroundColor: 'rgba(0, 0, 0, 0.95)' }}
+          >
+            <motion.div
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.5, ease: [0.34, 1.56, 0.64, 1] }}
+              className="flex flex-col items-center text-center max-w-lg px-6"
+            >
+              <div className="relative mb-8">
+                <div className="w-32 h-32 rounded-full flex items-center justify-center bg-gradient-to-br from-amber-400/20 to-amber-500/20 border-2 border-amber-400/60 shadow-2xl shadow-amber-500/30">
+                  <CheckCircle2 className="w-20 h-20 text-amber-400" strokeWidth={2.5} />
+                </div>
+              </div>
+              <h2 className="text-3xl font-bold text-white mb-4 font-inter">¡Prima vacacional disponible!</h2>
+              <p className="text-sm text-gray-300 font-inter leading-relaxed whitespace-pre-line">
+                {primaVacacionalInfo}
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Overlay de resultado: Prima vacacional no disponible */}
+      <AnimatePresence>
+        {showPrimaSkippedAnimation && primaVacacionalInfo && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center font-inter backdrop-blur-2xl"
+            style={{ backgroundColor: 'rgba(0, 0, 0, 0.95)' }}
+          >
+            <motion.div
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.5, ease: [0.34, 1.56, 0.64, 1] }}
+              className="flex flex-col items-center text-center max-w-lg px-6"
+            >
+              <div className="relative mb-8">
+                <div className="w-32 h-32 rounded-full flex items-center justify-center bg-gradient-to-br from-red-600/20 to-red-800/20 border-2 border-red-500/60 shadow-2xl shadow-red-600/40">
+                  <X className="w-20 h-20 text-red-400" strokeWidth={2.5} />
+                </div>
+              </div>
+              <h2 className="text-3xl font-bold text-white mb-4 font-inter">Sin prima vacacional disponible</h2>
+              <p className="text-sm text-gray-300 font-inter leading-relaxed whitespace-pre-line">
+                {primaVacacionalInfo}
+              </p>
             </motion.div>
           </motion.div>
         )}
@@ -1316,7 +1498,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
             </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="px-12 py-16 space-y-16">
+          <form ref={formRef} onSubmit={handleSubmit} className="px-12 py-16 space-y-16">
             {/* Datos Básicos */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
               <div className="space-y-4">
@@ -1475,45 +1657,32 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                         <ChevronDown className={`absolute right-5 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none ${isDark ? 'text-white' : 'text-gray-600'}`} size={20} />
                       </div>
 
-                      {/* Fecha de pago — calculada automáticamente al fin de mes + info del webhook */}
-                      {(form.vacationType === 'pago-prima-vacacional' || form.vacationType === 'ambos') && (
+                      {/* Estado de validación de prima vacacional */}
+                      {(form.vacationType === 'pago-prima-vacacional' || form.vacationType === 'ambos') && (isCheckingPrima || primaVacacionalInfo) && (
                         <motion.div
-                          initial={{ opacity: 0, y: 8 }}
+                          initial={{ opacity: 0, y: 6 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.3 }}
-                          className={`flex items-start gap-3 px-4 py-3 rounded-xl ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
+                          className={`flex items-start gap-3 px-4 py-3 rounded-xl font-inter ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
                         >
-                          {isCheckingPrima
-                            ? <Loader2 size={18} className="text-amber-500 flex-shrink-0 animate-spin mt-0.5" />
-                            : <AlertCircle size={18} className="text-amber-500 flex-shrink-0 mt-0.5" />
-                          }
+                          {isCheckingPrima ? (
+                            <Loader2 size={18} className="text-amber-500 flex-shrink-0 animate-spin mt-0.5" />
+                          ) : (
+                            <AlertCircle size={18} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                          )}
                           <div className="space-y-1">
-                            <span className={`text-xs font-semibold uppercase tracking-wider ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
-                              {isCheckingPrima ? 'Consultando información...' : 'Fecha de pago de prima vacacional'}
-                            </span>
-                            {!isCheckingPrima && (
-                              <>
-                                <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                                  El pago se realizará el{' '}
-                                  <span className="font-bold">
-                                    {(() => {
-                                      const now = new Date();
-                                      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-                                      return formatDateDDMMYYYY(lastDay);
-                                    })()}
-                                  </span>
-                                  {' '}(último día del mes en curso).
-                                </p>
-                                {primaVacacionalInfo && (
-                                  <p className={`text-xs leading-relaxed ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
-                                    {primaVacacionalInfo}
-                                  </p>
-                                )}
-                              </>
+                            <p className={`text-xs font-semibold uppercase tracking-wider ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
+                              {isCheckingPrima ? 'Verificando prima vacacional…' : 'Resultado de prima vacacional'}
+                            </p>
+                            {!isCheckingPrima && primaVacacionalInfo && (
+                              <p className={`text-xs leading-relaxed whitespace-pre-line ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
+                                {primaVacacionalInfo}
+                              </p>
                             )}
                           </div>
                         </motion.div>
                       )}
+
                     </div>
                   )}
 
@@ -2036,9 +2205,15 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
 
                   {/* Justificación - Solo se muestra cuando corresponde */}
                   {(() => {
-                    // Para Vacaciones: solo mostrar si los días están validados
+                    // Para Vacaciones:
+                    // - Prima vacacional: solo mostrar justificación si el webhook confirmó prima disponible
+                    // - Días o ambos: mostrar solo cuando los días estén validados
                     if (form.reason === 'Vacaciones') {
-                      if (!daysValidated) return null;
+                      if (form.vacationType === 'pago-prima-vacacional') {
+                        if (!primaDisponible) return null;
+                      } else if (!daysValidated) {
+                        return null;
+                      }
                     }
                     // Para Permiso: necesita fecha de permiso, horas Y archivo subido
                     else if (form.reason === 'Permiso') {
