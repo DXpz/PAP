@@ -43,6 +43,12 @@ function getNextBusinessDay(isoDate: string): Date {
   return d;
 }
 
+/** Genera un ID corto para emergencias: apred + 3 dígitos aleatorios */
+function generateEmergencyId(): string {
+  const num = Math.floor(100 + Math.random() * 900); // 100–999
+  return `apred${num}`;
+}
+
 /** Parsea DD/MM/YYYY o D/M/YYYY a YYYY-MM-DD; devuelve '' si no es válido */
 function parseDDMMYYYYToISO(str: string): string {
   if (!str || typeof str !== 'string') return '';
@@ -220,6 +226,7 @@ const INITIAL_FORM_STATE: FormState = {
   paymentDate: '',
   comments: '',
   attachment: null,
+  emergencyAttachmentId: '',
   startDate: '',
   endDate: '',
   startTime: '',
@@ -980,6 +987,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
         ...(!isEmergencyWithoutFile && {
           attachmentName: form.attachment?.name || null,
           attachmentData: base64File,
+          emergencyAttachmentId: form.emergencyAttachmentId || undefined,
         }),
       };
 
@@ -2309,7 +2317,32 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                               initial={{ opacity: 0, y: 10 }}
                               animate={{ opacity: 1, y: 0 }}
                               transition={{ duration: 0.35 }}
+                              className="space-y-4"
                             >
+                              {/* ID único de la cita médica / solicitud */}
+                              <div className="space-y-2">
+                                <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                                  ID de la cita médica
+                                  <span className="relative group inline-flex">
+                                    <AlertCircle size={14} className="text-amber-500 flex-shrink-0 cursor-help" />
+                                    <span className={`absolute left-0 top-full z-10 mt-1 w-64 px-3 py-2 text-[11px] font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                                      Ingresa el identificador único de la cita o folio que aparece en el comprobante médico.
+                                    </span>
+                                  </span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={form.emergencyAttachmentId || ''}
+                                  maxLength={8}
+                                  onChange={(e) => {
+                                    const val = e.target.value.slice(0, 8);
+                                    handleInputChange('emergencyAttachmentId', val);
+                                  }}
+                                  placeholder="Ej. AP123456"
+                                  className={`w-full px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10 placeholder:text-white/30' : 'bg-white text-gray-900 border border-gray-200 placeholder:text-gray-400'}`}
+                                />
+                              </div>
+
                               <input
                                 ref={fileInputRef}
                                 type="file"

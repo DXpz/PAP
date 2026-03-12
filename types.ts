@@ -33,6 +33,7 @@ export interface FormState {
   incapacityDays?: string;
   comments: string;
   attachment?: File | null;
+  emergencyAttachmentId?: string;
   // Legacy fields for backward compatibility if needed in UI logic
   vacationPeriod?: string;
 }
