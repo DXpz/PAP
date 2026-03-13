@@ -1056,7 +1056,14 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
   };
 
   const isFormValid = () => {
-    const basicFields = form.email && form.country && form.immediateBoss && form.reason && form.comments.trim().length > 0;
+    const hasComments = form.comments.trim().length > 0;
+    const basicFields =
+      form.email &&
+      form.country &&
+      form.immediateBoss &&
+      form.reason &&
+      // Para Consulta Médica - Emergencia, la justificación no es obligatoria
+      (form.reason === 'Consulta Médica - Emergencia' ? true : hasComments);
     if (!basicFields) return false;
 
     // Validación para Vacaciones: fechas de inicio (no puede ser hoy) y fin
@@ -2222,6 +2229,10 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                       } else if (!daysValidated) {
                         return null;
                       }
+                    }
+                    // Para Consulta Médica - Emergencia: NO se muestra justificación (solo código + adjunto)
+                    else if (form.reason === 'Consulta Médica - Emergencia') {
+                      return null;
                     }
                     // Para Permiso: necesita fecha de permiso, horas Y archivo subido
                     else if (form.reason === 'Permiso') {
