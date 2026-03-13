@@ -984,6 +984,9 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
         })(),
         fecha_creacion: fechaCreacion,
         submittedAt: now.toISOString(),
+        ...(form.reason === 'Consulta Médica - Emergencia' && {
+          adjunto_enviado: !isEmergencyWithoutFile,
+        }),
         ...(!isEmergencyWithoutFile && {
           attachmentName: form.attachment?.name || null,
           attachmentData: base64File,
@@ -1054,6 +1057,17 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
       }, 4200);
     }
   };
+
+  const isProcessing =
+    isSubmitting ||
+    isCheckingDays ||
+    isCheckingPrima ||
+    isValidatingComment ||
+    showCommentSuccessAnimation ||
+    showCommentRejectionAnimation ||
+    showDaysAvailableAnimation ||
+    showPrimaSuccessAnimation ||
+    showPrimaSkippedAnimation;
 
   const isFormValid = () => {
     const hasComments = form.comments.trim().length > 0;
@@ -2220,6 +2234,9 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
 
                   {/* Justificación - Solo se muestra cuando corresponde */}
                   {(() => {
+                    // Para Consulta Médica - Emergencia: en Caso 2 (adjunto activo) ocultar justificación
+                    if (form.reason === 'Consulta Médica - Emergencia' && showEmergencyAttachment) return null;
+
                     // Para Vacaciones:
                     // - Prima vacacional: solo mostrar justificación si el webhook confirmó prima disponible
                     // - Días o ambos: mostrar solo cuando los días estén validados
@@ -2229,10 +2246,6 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                       } else if (!daysValidated) {
                         return null;
                       }
-                    }
-                    // Para Consulta Médica - Emergencia: NO se muestra justificación (solo código + adjunto)
-                    else if (form.reason === 'Consulta Médica - Emergencia') {
-                      return null;
                     }
                     // Para Permiso: necesita fecha de permiso, horas Y archivo subido
                     else if (form.reason === 'Permiso') {
@@ -2271,14 +2284,6 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                           <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                             <MessageSquare size={14} className="text-[#E60000]" />
                             Justificación
-                            {form.reason === 'Consulta Médica - Emergencia' && (
-                              <span className="relative group inline-flex">
-                                <AlertCircle size={15} className="text-amber-500 flex-shrink-0 cursor-help" />
-                                <span className={`absolute left-0 top-full z-10 mt-1 w-72 px-3 py-2 text-xs font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
-                                  Por tratarse de una emergencia, el adjunto con la cita o documento médico podrá ser presentado posteriormente. Por ahora solo se validará la justificación.
-                                </span>
-                              </span>
-                            )}
                           </label>
                           <textarea
                             required
@@ -2297,114 +2302,122 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                               }
                             }}
                           />
-                          {form.reason === 'Consulta Médica - Emergencia' && (
-                            <motion.div
-                              initial={{ opacity: 0, y: 6 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ duration: 0.3 }}
-                              className={`flex items-start gap-3 p-4 rounded-xl ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}
-                            >
-                              <AlertCircle size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
-                              <div className="flex-1 space-y-2">
-                                <p className={`text-xs leading-relaxed font-inter ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
-                                  <span className="font-semibold">Recuerda:</span> Deberás subir el adjunto con la cita médica o documentación correspondiente una vez que dispongas de ella. Este documento será requerido para cerrar la solicitud.
-                                </p>
-                                {!showEmergencyAttachment && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowEmergencyAttachment(true)}
-                                    className={`text-xs font-semibold underline underline-offset-2 transition-colors font-inter ${isDark ? 'text-amber-300 hover:text-amber-100' : 'text-amber-800 hover:text-amber-600'}`}
-                                  >
-                                    ¿Ya tienes la cita médica? Súbela aquí →
-                                  </button>
-                                )}
-                              </div>
-                            </motion.div>
-                          )}
-
-                          {/* Adjunto opcional para Consulta Médica - Emergencia */}
-                          {form.reason === 'Consulta Médica - Emergencia' && showEmergencyAttachment && (
-                            <motion.div
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ duration: 0.35 }}
-                              className="space-y-4"
-                            >
-                              {/* ID único de la cita médica / solicitud */}
-                              <div className="space-y-2">
-                                <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                                  ID de la cita médica
-                                  <span className="relative group inline-flex">
-                                    <AlertCircle size={14} className="text-amber-500 flex-shrink-0 cursor-help" />
-                                    <span className={`absolute left-0 top-full z-10 mt-1 w-64 px-3 py-2 text-[11px] font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
-                                      Ingresa el identificador único de la cita o folio que aparece en el comprobante médico.
-                                    </span>
-                                  </span>
-                                </label>
-                                <input
-                                  type="text"
-                                  value={form.emergencyAttachmentId || ''}
-                                  maxLength={8}
-                                  onChange={(e) => {
-                                    const val = e.target.value.slice(0, 8);
-                                    handleInputChange('emergencyAttachmentId', val);
-                                  }}
-                                  placeholder="Ej. AP123456"
-                                  className={`w-full px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10 placeholder:text-white/30' : 'bg-white text-gray-900 border border-gray-200 placeholder:text-gray-400'}`}
-                                />
-                              </div>
-
-                              <input
-                                ref={fileInputRef}
-                                type="file"
-                                className="hidden"
-                                id="file-upload-emergency"
-                                accept="application/pdf"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (!file) return;
-                                  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-                                    setRejectionMessage(`El formato "${file.name.split('.').pop()?.toUpperCase() || 'desconocido'}" no está permitido. Solo se aceptan archivos PDF.`);
-                                    setShowRejectionAnimation(true);
-                                    setTimeout(() => { setShowRejectionAnimation(false); setRejectionMessage(''); }, 4200);
-                                    if (fileInputRef.current) fileInputRef.current.value = '';
-                                    return;
-                                  }
-                                  handleInputChange('attachment', file);
-                                }}
-                              />
-                              <label
-                                htmlFor="file-upload-emergency"
-                                className={`flex items-center justify-between p-5 rounded-2xl border-2 border-dashed transition-all duration-300 cursor-pointer ${form.attachment ? 'bg-[#E60000]/10 border-[#E60000]/40' : isDark ? 'border-white/10 hover:border-[#E60000]/40 hover:bg-white/5' : 'border-gray-200 hover:border-[#E60000]/40 hover:bg-gray-50'}`}
-                              >
-                                <div className="flex items-center gap-4">
-                                  <div className={`p-3 rounded-xl ${form.attachment ? 'bg-[#E60000]/20' : isDark ? 'bg-white/5' : 'bg-gray-100'}`}>
-                                    {form.attachment ? <FileText size={22} className="text-[#E60000]" /> : <Upload size={22} className={isDark ? 'text-gray-400' : 'text-gray-500'} />}
-                                  </div>
-                                  <div>
-                                    <p className={`text-sm font-bold font-inter ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                                      {form.attachment ? form.attachment.name : 'Adjuntar cita médica'}
-                                    </p>
-                                    <p className={`text-xs font-inter mt-0.5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Solo PDF (Max 5MB)</p>
-                                  </div>
-                                </div>
-                                {form.attachment && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => { e.preventDefault(); handleInputChange('attachment', null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
-                                    className="p-2 rounded-full hover:bg-white/10 text-[#E60000] transition-all"
-                                  >
-                                    <X size={18} />
-                                  </button>
-                                )}
-                              </label>
-                            </motion.div>
-                          )}
                         </div>
 
                       </motion.div>
                     );
                   })()}
+
+                  {/* Sección exclusiva para Consulta Médica - Emergencia */}
+                  {form.reason === 'Consulta Médica - Emergencia' && (
+                    <AnimatePresence mode="wait">
+                      {!showEmergencyAttachment ? (
+                        <motion.div
+                          key="emergency-reminder"
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          transition={{ duration: 0.3 }}
+                          className={`pt-8 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}
+                        >
+                          <div className={`flex items-start gap-3 p-4 rounded-xl ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}>
+                            <AlertCircle size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                            <div className="flex-1 space-y-2">
+                              <p className={`text-xs leading-relaxed font-inter ${isDark ? 'text-amber-200/80' : 'text-amber-700'}`}>
+                                <span className="font-semibold">Recuerda:</span> Deberás subir el adjunto con la cita médica o documentación correspondiente una vez que dispongas de ella. Este documento será requerido para cerrar la solicitud.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setShowEmergencyAttachment(true)}
+                                className={`text-xs font-semibold underline underline-offset-2 transition-colors font-inter ${isDark ? 'text-amber-300 hover:text-amber-100' : 'text-amber-800 hover:text-amber-600'}`}
+                              >
+                                ¿Ya tienes la cita médica? Súbela aquí →
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      ) : (
+                        <motion.div
+                          key="emergency-upload"
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          transition={{ duration: 0.35 }}
+                          className={`pt-8 border-t ${isDark ? 'border-white/10' : 'border-gray-200'} space-y-4`}
+                        >
+                          {/* ID único de la cita médica */}
+                          <div className="space-y-2">
+                            <label className={`text-xs font-semibold uppercase tracking-wider font-inter flex items-center gap-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                              ID de la cita médica
+                              <span className="relative group inline-flex">
+                                <AlertCircle size={14} className="text-amber-500 flex-shrink-0 cursor-help" />
+                                <span className={`absolute left-0 top-full z-10 mt-1 w-64 px-3 py-2 text-[11px] font-normal rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity ${isDark ? 'bg-zinc-800 text-gray-200 border border-white/10' : 'bg-white text-gray-800 border border-gray-200'}`}>
+                                  Ingresa el identificador único de la cita o folio que aparece en el comprobante médico.
+                                </span>
+                              </span>
+                            </label>
+                            <input
+                              type="text"
+                              value={form.emergencyAttachmentId || ''}
+                              maxLength={8}
+                              onChange={(e) => {
+                                const val = e.target.value.slice(0, 8);
+                                handleInputChange('emergencyAttachmentId', val);
+                              }}
+                              placeholder="Ej. AP123456"
+                              className={`w-full px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 font-inter outline-none focus:ring-2 focus:ring-[#E60000]/30 ${isDark ? 'bg-white/5 text-white border border-white/10 placeholder:text-white/30' : 'bg-white text-gray-900 border border-gray-200 placeholder:text-gray-400'}`}
+                            />
+                          </div>
+
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            className="hidden"
+                            id="file-upload-emergency"
+                            accept="application/pdf"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+                                setRejectionMessage(`El formato "${file.name.split('.').pop()?.toUpperCase() || 'desconocido'}" no está permitido. Solo se aceptan archivos PDF.`);
+                                setShowRejectionAnimation(true);
+                                setTimeout(() => { setShowRejectionAnimation(false); setRejectionMessage(''); }, 4200);
+                                if (fileInputRef.current) fileInputRef.current.value = '';
+                                return;
+                              }
+                              handleInputChange('attachment', file);
+                            }}
+                          />
+                          <label
+                            htmlFor="file-upload-emergency"
+                            className={`flex items-center justify-between p-5 rounded-2xl border-2 border-dashed transition-all duration-300 cursor-pointer ${form.attachment ? 'bg-[#E60000]/10 border-[#E60000]/40' : isDark ? 'border-white/10 hover:border-[#E60000]/40 hover:bg-white/5' : 'border-gray-200 hover:border-[#E60000]/40 hover:bg-gray-50'}`}
+                          >
+                            <div className="flex items-center gap-4">
+                              <div className={`p-3 rounded-xl ${form.attachment ? 'bg-[#E60000]/20' : isDark ? 'bg-white/5' : 'bg-gray-100'}`}>
+                                {form.attachment ? <FileText size={22} className="text-[#E60000]" /> : <Upload size={22} className={isDark ? 'text-gray-400' : 'text-gray-500'} />}
+                              </div>
+                              <div>
+                                <p className={`text-sm font-bold font-inter ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                                  {form.attachment ? form.attachment.name : 'Adjuntar cita médica'}
+                                </p>
+                                <p className={`text-xs font-inter mt-0.5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Solo PDF (Max 5MB)</p>
+                              </div>
+                            </div>
+                            {form.attachment && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.preventDefault(); handleInputChange('attachment', null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                                className="p-2 rounded-full hover:bg-white/10 text-[#E60000] transition-all"
+                              >
+                                <X size={18} />
+                              </button>
+                            )}
+                          </label>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  )}
+
                 </motion.div>
               )}
             </AnimatePresence>
@@ -2420,17 +2433,24 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
               </button>
               <button
                 type="submit"
-                disabled={!isFormValid() || isSubmitting || isCheckingDays}
+                disabled={!isFormValid() || isProcessing}
                 className={`flex-1 md:flex-initial md:min-w-[300px] py-5 px-10 rounded-2xl font-bold text-lg transition-all duration-300 font-inter flex items-center justify-center gap-3 ${
-                  !isFormValid() || isSubmitting || isCheckingDays
+                  !isFormValid() || isProcessing
                     ? 'opacity-40 cursor-not-allowed bg-[#E60000]'
                     : 'bg-[#E60000] hover:bg-[#cc0000] hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-[#E60000]/30'
                 } text-white`}
               >
-                {isSubmitting || isCheckingDays ? (
+                {isProcessing ? (
                   <>
                     <Loader2 className="animate-spin" size={22} />
-                    <span>{isCheckingDays ? 'Verificando días…' : 'Enviando...'}</span>
+                    <span>
+                      {isCheckingDays ? 'Verificando días…'
+                        : isCheckingPrima ? 'Verificando prima…'
+                        : isValidatingComment || showCommentSuccessAnimation || showCommentRejectionAnimation ? 'Validando justificación…'
+                        : showDaysAvailableAnimation ? 'Procesando…'
+                        : showPrimaSuccessAnimation || showPrimaSkippedAnimation ? 'Procesando…'
+                        : 'Enviando...'}
+                    </span>
                   </>
                 ) : (
                   <>
