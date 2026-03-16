@@ -658,6 +658,13 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
       return false;
     }
 
+    // Si la justificación ya fue validada previamente y el usuario no ha cambiado el texto
+    // (porque cualquier cambio en comments resetea commentValidated a false),
+    // evitamos volver a llamar al webhook y simplemente consideramos la validación como válida.
+    if (commentValidated) {
+      return true;
+    }
+
     return new Promise((resolve) => {
       (async () => {
         try {
@@ -952,8 +959,9 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
     e.preventDefault();
     if (isSubmitting || isCheckingDays) return;
 
-    // Validar días disponibles para Vacaciones también al enviar (por seguridad)
-    if (form.reason === 'Vacaciones') {
+    // Validar días disponibles para Vacaciones SOLO si aún no están validados.
+    // Esto evita revalidaciones innecesarias y dobles acciones cuando el usuario ya pasó por la validación.
+    if (form.reason === 'Vacaciones' && !daysValidated) {
       const ok = await validateVacationDays();
       if (!ok) return;
     }
