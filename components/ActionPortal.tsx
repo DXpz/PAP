@@ -957,7 +957,12 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting || isCheckingDays) return;
+    if (isProcessing) return;
+
+    // Cancelar cualquier debounce pendiente para evitar que disparen validaciones duplicadas
+    if (daysCheckDebounceRef.current) clearTimeout(daysCheckDebounceRef.current);
+    if (commentValidationDebounceRef.current) clearTimeout(commentValidationDebounceRef.current);
+    if (primaVacacionalDebounceRef.current) clearTimeout(primaVacacionalDebounceRef.current);
 
     // Validar días disponibles para Vacaciones SOLO si aún no están validados.
     // Esto evita revalidaciones innecesarias y dobles acciones cuando el usuario ya pasó por la validación.
@@ -2301,6 +2306,7 @@ export const ActionPortal: React.FC<ActionPortalProps> = ({ theme }) => {
                             value={form.comments}
                             onChange={(e) => handleInputChange('comments', e.target.value)}
                             onBlur={(e) => {
+                              if (commentValidated) return;
                               const val = e.target.value;
                               if (commentValidationDebounceRef.current) clearTimeout(commentValidationDebounceRef.current);
                               if (form.reason && val.trim()) {
